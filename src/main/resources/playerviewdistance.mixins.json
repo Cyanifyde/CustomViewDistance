@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "com.playerviewdistance.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "server": [
+    "ChunkMapMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

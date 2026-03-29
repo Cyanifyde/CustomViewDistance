@@ -1,0 +1,26 @@
+{
+	"schemaVersion": 1,
+	"id": "playerviewdistance",
+	"version": "${version}",
+	"name": "Player View Distance",
+	"description": "Per-player view distance: loads and sends only the chunks each player's render distance requires.",
+	"license": "All Rights Reserved",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"com.playerviewdistance.PlayerViewDistanceMod"
+		]
+	},
+	"mixins": [
+		{
+			"config": "playerviewdistance.mixins.json",
+			"environment": "server"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.18.5",
+		"minecraft": "~26.1",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
