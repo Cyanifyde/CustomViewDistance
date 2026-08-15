@@ -1,0 +1,22 @@
+plugins {
+    id 'java-library'
+}
+
+group = rootProject.group
+version = rootProject.version
+
+dependencies {
+    api 'it.unimi.dsi:fastutil:8.5.16'
+    implementation 'com.google.code.gson:gson:2.13.2'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}

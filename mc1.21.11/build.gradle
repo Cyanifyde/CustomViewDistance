@@ -1,0 +1,13 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap'
+    id 'maven-publish'
+}
+
+ext.pvdMinecraftVersion = '1.21.11'
+ext.pvdArtifactMinecraftVersion = '1.21.11'
+ext.pvdMinecraftDependency = '1.21.11'
+ext.pvdFabricApiVersion = '0.141.6+1.21.11'
+ext.pvdJavaVersion = 21
+ext.pvdUseMojangMappings = true
+
+apply from: rootProject.file('gradle/minecraft-module.gradle')
