@@ -3,6 +3,7 @@ package com.playerviewdistance;
 import com.playerviewdistance.commands.PvdCommand;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -15,23 +16,24 @@ public final class PlayerViewDistanceMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        ViewDistanceConfig.load();
-        CircleTemplate.init();
+        ViewDistanceConfig.initialize();
 
-        ServerLifecycleEvents.SERVER_STARTING.register(PerPlayerChunkLoader::init);
-        ServerLifecycleEvents.SERVER_STOPPING.register(server -> PerPlayerChunkLoader.shutdown());
+        ServerLifecycleEvents.SERVER_STARTED.register(PerPlayerChunkLoader::init);
+        ServerLifecycleEvents.SERVER_STOPPING.register(PerPlayerChunkLoader::shutdown);
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
                 PerPlayerChunkLoader.onPlayerJoin(handler.player));
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
                 PerPlayerChunkLoader.onPlayerLeave(handler.player));
 
+        ServerEntityEvents.ENTITY_LOAD.register(PerPlayerChunkLoader::onEntityLoad);
+        ServerEntityEvents.ENTITY_UNLOAD.register(PerPlayerChunkLoader::onEntityUnload);
         ServerTickEvents.END_SERVER_TICK.register(PerPlayerChunkLoader::onServerTick);
 
         CommandRegistrationCallback.EVENT.register(PvdCommand::register);
 
-        ViewDistanceConfig config = ViewDistanceConfig.get();
-        LOGGER.info("PlayerViewDistance loaded (min={}, max={}, workers={})",
-                config.minViewDistance, config.maxViewDistance, config.workerThreadCount);
+        var config = ViewDistanceConfig.get();
+        LOGGER.info("PlayerViewDistance 2 initialized (schema={}, min={}, max={}, governor={})",
+                config.schemaVersion(), config.minViewDistance(), config.maxViewDistance(), config.governorProfile());
     }
 }

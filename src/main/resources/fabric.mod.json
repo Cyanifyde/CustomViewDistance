@@ -3,8 +3,8 @@
 	"id": "playerviewdistance",
 	"version": "${version}",
 	"name": "Player View Distance",
-	"description": "Per-player view distance: loads and sends only the chunks each player's render distance requires.",
-	"license": "All Rights Reserved",
+	"description": "Server-only per-player chunk loading with exact overlap merging and adaptive off-thread planning.",
+	"license": "Apache-2.0",
 	"environment": "server",
 	"entrypoints": {
 		"main": [
@@ -18,9 +18,9 @@
 		}
 	],
 	"depends": {
-		"fabricloader": ">=0.18.5",
-		"minecraft": "~26.1",
-		"java": ">=25",
+		"fabricloader": ">=0.19.3",
+		"minecraft": "${minecraft_dependency}",
+		"java": ">=${java_dependency}",
 		"fabric-api": "*"
 	}
 }

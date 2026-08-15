@@ -1,49 +1,37 @@
 plugins {
-	id 'net.fabricmc.fabric-loom' version "${loom_version}"
-	id 'maven-publish'
+    id 'base'
 }
 
-version = project.mod_version
-group = project.maven_group
+group = providers.gradleProperty('maven_group').get()
+version = providers.gradleProperty('mod_version').get()
 
-base {
-	archivesName = project.archives_base_name
+allprojects {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        mavenCentral()
+    }
 }
 
-repositories {// Loom adds the core repositories needed for Minecraft and Fabric artifacts.
+tasks.named('build') {
+    dependsOn subprojects.collect { it.tasks.named('build') }
 }
 
-dependencies {
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-
-	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-}
-
-processResources {
-	inputs.property "version", project.version
-
-	filesMatching("fabric.mod.json") {
-		expand "version": inputs.properties.version
-	}
-}
-
-tasks.withType(JavaCompile).configureEach {
-	it.options.release = 25
-}
-
-java {
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_25
-	targetCompatibility = JavaVersion.VERSION_25
-}
-
-publishing {
-	publications {
-		create("mavenJava", MavenPublication) {
-			artifactId = project.archives_base_name
-			from components.java
-		}
-	}
+tasks.register('releaseArtifacts', Sync) {
+    dependsOn ':mc1.21.11:remapJar', ':mc1.21.11:remapSourcesJar'
+    dependsOn ':mc26.1:jar', ':mc26.1:sourcesJar'
+    dependsOn ':mc26.2:jar', ':mc26.2:sourcesJar'
+    from project(':mc1.21.11').layout.buildDirectory.dir('libs')
+    from project(':mc26.1').layout.buildDirectory.dir('libs')
+    from project(':mc26.2').layout.buildDirectory.dir('libs')
+    include "playerviewdistance-${rootProject.version}+mc1.21.11.jar"
+    include "playerviewdistance-${rootProject.version}+mc1.21.11-sources.jar"
+    include "playerviewdistance-${rootProject.version}+mc26.1.jar"
+    include "playerviewdistance-${rootProject.version}+mc26.1-sources.jar"
+    include "playerviewdistance-${rootProject.version}+mc26.2.jar"
+    include "playerviewdistance-${rootProject.version}+mc26.2-sources.jar"
+    into layout.buildDirectory.dir('release')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
 }

@@ -1,12 +1,21 @@
 pluginManagement {
-	repositories {
-		maven {
-			name = 'Fabric'
-			url = 'https://maven.fabricmc.net/'
-		}
-		mavenCentral()
-		gradlePluginPortal()
-	}
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    plugins {
+        id 'net.fabricmc.fabric-loom' version '1.17.19'
+        id 'net.fabricmc.fabric-loom-remap' version '1.17.19'
+    }
 }
 
 rootProject.name = 'playerviewdistance'
+
+include 'common'
+include 'mc1.21.11'
+include 'mc26.1'
+include 'mc26.2'

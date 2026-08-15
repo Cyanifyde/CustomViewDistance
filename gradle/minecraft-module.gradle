@@ -1,0 +1,79 @@
+version = "${rootProject.version}+mc${pvdArtifactMinecraftVersion}"
+group = rootProject.group
+
+base {
+    archivesName = rootProject.providers.gradleProperty('archives_base_name').get()
+}
+
+loom {
+    runs {
+        server {
+            server()
+            name = "PVD ${pvdMinecraftVersion} Server"
+            runDir = "run/server"
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${pvdMinecraftVersion}"
+    if (pvdUseMojangMappings) {
+        mappings loom.officialMojangMappings()
+    }
+    if (pvdUseMojangMappings) {
+        modImplementation "net.fabricmc:fabric-loader:${rootProject.providers.gradleProperty('loader_version').get()}"
+        modImplementation "net.fabricmc.fabric-api:fabric-api:${pvdFabricApiVersion}"
+    } else {
+        implementation "net.fabricmc:fabric-loader:${rootProject.providers.gradleProperty('loader_version').get()}"
+        implementation "net.fabricmc.fabric-api:fabric-api:${pvdFabricApiVersion}"
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = [
+                    rootProject.file('common/src/main/java'),
+                    rootProject.file('src/main/java')
+            ]
+        }
+        resources {
+            srcDirs = [rootProject.file('src/main/resources')]
+        }
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_dependency', pvdMinecraftDependency
+    inputs.property 'java_dependency', pvdJavaVersion
+    inputs.property 'java_compatibility', "JAVA_${pvdJavaVersion}"
+
+    filesMatching(['fabric.mod.json', 'playerviewdistance.mixins.json']) {
+        expand(
+                version: project.version,
+                minecraft_dependency: pvdMinecraftDependency,
+                java_dependency: pvdJavaVersion,
+                java_compatibility: "JAVA_${pvdJavaVersion}"
+        )
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = pvdJavaVersion as int
+    options.encoding = 'UTF-8'
+}
+
+java {
+    withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(pvdJavaVersion as int)
+    }
+    sourceCompatibility = JavaVersion.toVersion(pvdJavaVersion)
+    targetCompatibility = JavaVersion.toVersion(pvdJavaVersion)
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+}
