@@ -57,9 +57,10 @@ public final class PvdCommand {
         for (PerPlayerChunkLoader.PlayerStatus player : players) {
             String override = player.override() == null ? "" : ", override=" + player.override();
             String line = String.format(Locale.ROOT,
-                    "%s: requested=%d, desired=%d, applied=%d%s, %s [%d,%d]",
+                    "%s: requested=%d, desired=%d, applied=%d, simulation=%d%s, %s [%d,%d]",
                     player.name(), player.requestedViewDistance(), player.desiredViewDistance(),
-                    player.appliedViewDistance(), override, player.dimension(), player.chunkX(), player.chunkZ());
+                    player.appliedViewDistance(), player.simulationDistance(), override,
+                    player.dimension(), player.chunkX(), player.chunkZ());
             source.sendSuccess(() -> Component.literal(line), false);
         }
         return players.size();

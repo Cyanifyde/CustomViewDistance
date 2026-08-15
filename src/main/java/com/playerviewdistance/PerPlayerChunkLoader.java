@@ -1,5 +1,6 @@
 package com.playerviewdistance;
 
+import com.playerviewdistance.compat.ConnectionDistanceCeiling;
 import com.playerviewdistance.config.ConfigData;
 import com.playerviewdistance.config.ConfigRepository;
 import com.playerviewdistance.config.OverrideRepository;
@@ -17,8 +18,12 @@ import com.playerviewdistance.core.PlayerCoverage;
 import com.playerviewdistance.core.PlayerSnapshot;
 import com.playerviewdistance.core.SourceMutation;
 import com.playerviewdistance.mixin.ChunkMapInvoker;
+import com.playerviewdistance.mixin.DistanceManagerAccessor;
+import com.playerviewdistance.mixin.ServerCommonPacketListenerAccessor;
 import com.playerviewdistance.mixin.ServerChunkCacheAccessor;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.network.Connection;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerChunkCache;
@@ -184,8 +189,18 @@ public final class PerPlayerChunkLoader {
     public static int getEffectiveViewDistance(ServerPlayer player) {
         PlayerKey key = PlayerKey.of(player.getUUID());
         Integer override = operatorOverrides.get(key);
-        return ViewDistancePolicy.effectiveDistance(
+        int configuredCandidate = ViewDistancePolicy.effectiveDistance(
                 player.requestedViewDistance(), override, ViewDistanceConfig.get(), serverViewDistance);
+        // The ChunkMap value is dimension-local. Mods which lower a particular
+        // world's distance therefore remain authoritative without a named API.
+        return Math.min(configuredCandidate, currentLevelViewDistance(player.level()));
+    }
+
+    public static void initializeConnectionCeiling(ServerPlayer player, Connection connection) {
+        if (server != null) {
+            ((ConnectionDistanceCeiling) connection)
+                    .playerviewdistance$setViewDistanceCeiling(getEffectiveViewDistance(player));
+        }
     }
 
     public static void onPlayerJoin(ServerPlayer player) {
@@ -199,6 +214,7 @@ public final class PerPlayerChunkLoader {
         if (vmpGetWatcherMethod == null) {
             refreshChunkTracking(player);
         }
+        sendEffectiveCacheRadius(player);
         planDirty = true;
     }
 
@@ -209,6 +225,7 @@ public final class PerPlayerChunkLoader {
         if (planner != null) {
             planner.removePlayer(key);
         }
+        setConnectionCeiling(player, 32);
         invalidateOutstandingPlan();
     }
 
@@ -229,6 +246,7 @@ public final class PerPlayerChunkLoader {
         }
         capturePlayer(player);
         refreshChunkTracking(player);
+        sendEffectiveCacheRadius(player);
     }
 
     public static void onServerViewDistanceChanging(int newCap) {
@@ -246,11 +264,12 @@ public final class PerPlayerChunkLoader {
 
     public static void onServerViewDistanceChanged() {
         if (server != null) {
+            recaptureAllPlayers();
             refreshAllChunkTracking();
         }
     }
 
-    public static void onSimulationDistanceChanged(int newSimulationDistance) {
+    public static void onServerSimulationDistanceChanging(int newSimulationDistance) {
         int clamped = clampVanillaDistance(newSimulationDistance);
         if (simulationDistance == clamped) {
             return;
@@ -260,6 +279,41 @@ public final class PerPlayerChunkLoader {
             removeAllPrivateSources();
             invalidateOutstandingPlan();
             recaptureAllPlayers();
+        }
+    }
+
+    public static void onServerSimulationDistanceChanged() {
+        if (server != null) {
+            recaptureAllPlayers();
+        }
+    }
+
+    public static void onLevelViewDistanceChanging(ServerLevel level, int newDistance) {
+        if (server == null || currentLevelViewDistance(level) == clampVanillaDistance(newDistance)) {
+            return;
+        }
+        removePrivateSourcesInDimension(dimensionId(level));
+        invalidateOutstandingPlan();
+    }
+
+    public static void onLevelViewDistanceChanged(ServerLevel level) {
+        if (server != null) {
+            recapturePlayersInLevel(level);
+            refreshPlayersInLevel(level);
+        }
+    }
+
+    public static void onLevelSimulationDistanceChanging(ServerLevel level, int newDistance) {
+        if (server == null || currentLevelSimulationDistance(level) == clampVanillaDistance(newDistance)) {
+            return;
+        }
+        removePrivateSourcesInDimension(dimensionId(level));
+        invalidateOutstandingPlan();
+    }
+
+    public static void onLevelSimulationDistanceChanged(ServerLevel level) {
+        if (server != null) {
+            recapturePlayersInLevel(level);
         }
     }
 
@@ -354,7 +408,8 @@ public final class PerPlayerChunkLoader {
 
         int liveSimulationDistance = minecraftServer.getPlayerList().getSimulationDistance();
         if (liveSimulationDistance != simulationDistance) {
-            onSimulationDistanceChanged(liveSimulationDistance);
+            onServerSimulationDistanceChanging(liveSimulationDistance);
+            onServerSimulationDistanceChanged();
         }
         int liveViewDistance = minecraftServer.getPlayerList().getViewDistance();
         if (liveViewDistance != serverViewDistance) {
@@ -368,7 +423,6 @@ public final class PerPlayerChunkLoader {
         if (planDirty || requestedGeneration == 0
                 || (noOutstandingRequest && (convergenceNeeded || governorHeartbeat))) {
             requestedGeneration = planner.requestPlan(
-                    simulationDistance,
                     appliedRevision,
                     appliedSnapshots(),
                     latestMetrics
@@ -407,7 +461,7 @@ public final class PerPlayerChunkLoader {
             AppliedSource source = appliedSources.get(player.key());
             int appliedView = source == null
                     ? Math.max(player.achievedViewDistance(),
-                    Math.min(player.effectiveViewDistance(), simulationDistance))
+                    Math.min(player.effectiveViewDistance(), player.simulationDistance()))
                     : Math.max(0, source.ticketRadius() - LoadSource.LOADING_MARGIN);
             statuses.add(new PlayerStatus(
                     player.key().toUuid(),
@@ -415,6 +469,7 @@ public final class PerPlayerChunkLoader {
                     player.requestedViewDistance(),
                     player.effectiveViewDistance(),
                     appliedView,
+                    player.simulationDistance(),
                     operatorOverrides.get(player.key()),
                     player.dimension(),
                     player.chunkX(),
@@ -538,6 +593,7 @@ public final class PerPlayerChunkLoader {
         int chunkZ = Math.floorDiv(player.getBlockZ(), 16);
         String dimension = dimensionId(player.level());
         int effective = getEffectiveViewDistance(player);
+        int localSimulationDistance = currentLevelSimulationDistance(player.level());
         CapturedPlayer old = players.get(key);
         int achieved = old == null ? 0 : old.achievedViewDistance();
         CapturedPlayer captured = new CapturedPlayer(
@@ -548,7 +604,8 @@ public final class PerPlayerChunkLoader {
                 chunkZ,
                 player.requestedViewDistance(),
                 effective,
-                Math.min(achieved, effective)
+                Math.min(achieved, effective),
+                localSimulationDistance
         );
         if (captured.equals(old)) {
             return;
@@ -559,6 +616,10 @@ public final class PerPlayerChunkLoader {
         }
         players.put(key, captured);
         planner.upsertPlayer(captured.toSnapshot());
+        setConnectionCeiling(player, effective);
+        if (old != null && old.effectiveViewDistance() != effective && player.connection != null) {
+            player.connection.send(new ClientboundSetChunkCacheRadiusPacket(effective));
+        }
         invalidateOutstandingPlan();
     }
 
@@ -571,7 +632,7 @@ public final class PerPlayerChunkLoader {
                 || old.chunkX() != current.chunkX()
                 || old.chunkZ() != current.chunkZ();
         int maximumTicketRadius = current.effectiveViewDistance() + LoadSource.LOADING_MARGIN;
-        boolean noLongerNeeded = current.effectiveViewDistance() <= simulationDistance;
+        boolean noLongerNeeded = current.effectiveViewDistance() <= current.simulationDistance();
         boolean tooLarge = applied.ticketRadius() > maximumTicketRadius;
         if (!moved && !noLongerNeeded && !tooLarge) {
             return;
@@ -659,6 +720,15 @@ public final class PerPlayerChunkLoader {
         }
     }
 
+    private static void recapturePlayersInLevel(ServerLevel level) {
+        if (server == null || planner == null) {
+            return;
+        }
+        for (ServerPlayer player : level.players()) {
+            capturePlayer(player);
+        }
+    }
+
     private static void onOverrideChanged(PlayerKey key) {
         if (server == null) {
             return;
@@ -668,6 +738,7 @@ public final class PerPlayerChunkLoader {
             retireOwnedSource(key, true);
             capturePlayer(player);
             refreshChunkTracking(player);
+            sendEffectiveCacheRadius(player);
             planDirty = true;
         }
     }
@@ -678,7 +749,34 @@ public final class PerPlayerChunkLoader {
         }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             refreshChunkTracking(player);
+            sendEffectiveCacheRadius(player);
         }
+    }
+
+    private static void refreshPlayersInLevel(ServerLevel level) {
+        for (ServerPlayer player : level.players()) {
+            refreshChunkTracking(player);
+            sendEffectiveCacheRadius(player);
+        }
+    }
+
+    private static void sendEffectiveCacheRadius(ServerPlayer player) {
+        if (player.connection == null) {
+            return;
+        }
+        int effective = getEffectiveViewDistance(player);
+        setConnectionCeiling(player, effective);
+        player.connection.send(new ClientboundSetChunkCacheRadiusPacket(effective));
+    }
+
+    private static void setConnectionCeiling(ServerPlayer player, int distance) {
+        if (player.connection == null) {
+            return;
+        }
+        Connection connection = ((ServerCommonPacketListenerAccessor) (Object) player.connection)
+                .playerviewdistance$getConnection();
+        ((ConnectionDistanceCeiling) connection)
+                .playerviewdistance$setViewDistanceCeiling(distance);
     }
 
     private static void refreshChunkTracking(ServerPlayer player) {
@@ -874,7 +972,7 @@ public final class PerPlayerChunkLoader {
                     || !player.dimension().equals(source.dimension())
                     || player.chunkX() != source.chunkX()
                     || player.chunkZ() != source.chunkZ()
-                    || player.effectiveViewDistance() <= simulationDistance
+                    || player.effectiveViewDistance() <= player.simulationDistance()
                     || player.effectiveViewDistance() + LoadSource.LOADING_MARGIN < source.ticketRadius()) {
                 continue;
             }
@@ -891,8 +989,42 @@ public final class PerPlayerChunkLoader {
             removeTicket(source, source.area());
         }
         appliedSources.clear();
+        resetAchievedCoverage(null);
         if (changed) {
             appliedRevision++;
+        }
+    }
+
+    private static void removePrivateSourcesInDimension(String dimension) {
+        boolean changed = false;
+        for (AppliedSource source : List.copyOf(appliedSources.values())) {
+            if (!source.dimension().equals(dimension)) {
+                continue;
+            }
+            appliedSources.remove(source.owner());
+            removeTicket(source, source.area());
+            changed = true;
+        }
+        resetAchievedCoverage(dimension);
+        if (changed) {
+            appliedRevision++;
+        }
+    }
+
+    private static void resetAchievedCoverage(String dimension) {
+        for (Map.Entry<PlayerKey, CapturedPlayer> entry : players.entrySet()) {
+            CapturedPlayer player = entry.getValue();
+            if (dimension != null && !dimension.equals(player.dimension())) {
+                continue;
+            }
+            int floor = Math.min(player.effectiveViewDistance(), player.simulationDistance());
+            if (player.achievedViewDistance() != floor) {
+                CapturedPlayer reset = player.withAchieved(floor);
+                entry.setValue(reset);
+                if (planner != null) {
+                    planner.upsertPlayer(reset.toSnapshot());
+                }
+            }
         }
     }
 
@@ -910,6 +1042,22 @@ public final class PerPlayerChunkLoader {
 
     private static String dimensionId(ServerLevel level) {
         return level.dimension().identifier().toString();
+    }
+
+    private static int currentLevelViewDistance(ServerLevel level) {
+        ChunkMap chunkMap = ((ServerChunkCacheAccessor) level.getChunkSource())
+                .playerviewdistance$getChunkMap();
+        return clampVanillaDistance(
+                ((ChunkMapInvoker) chunkMap).playerviewdistance$getServerViewDistance());
+    }
+
+    private static int currentLevelSimulationDistance(ServerLevel level) {
+        ChunkMap chunkMap = ((ServerChunkCacheAccessor) level.getChunkSource())
+                .playerviewdistance$getChunkMap();
+        Object distanceManager = chunkMap.getDistanceManager();
+        return clampVanillaDistance(
+                ((DistanceManagerAccessor) distanceManager)
+                        .playerviewdistance$getSimulationDistance());
     }
 
     private static void updateAchieved(PlayerKey owner, int ticketRadius) {
@@ -1024,15 +1172,18 @@ public final class PerPlayerChunkLoader {
             int chunkZ,
             int requestedViewDistance,
             int effectiveViewDistance,
-            int achievedViewDistance
+            int achievedViewDistance,
+            int simulationDistance
     ) {
         private PlayerSnapshot toSnapshot() {
-            return new PlayerSnapshot(key, dimension, chunkX, chunkZ, effectiveViewDistance, achievedViewDistance);
+            return new PlayerSnapshot(
+                    key, dimension, chunkX, chunkZ,
+                    effectiveViewDistance, achievedViewDistance, simulationDistance);
         }
 
         private CapturedPlayer withAchieved(int achieved) {
             return new CapturedPlayer(key, name, dimension, chunkX, chunkZ,
-                    requestedViewDistance, effectiveViewDistance, achieved);
+                    requestedViewDistance, effectiveViewDistance, achieved, simulationDistance);
         }
     }
 
@@ -1067,6 +1218,7 @@ public final class PerPlayerChunkLoader {
             int requestedViewDistance,
             int desiredViewDistance,
             int appliedViewDistance,
+            int simulationDistance,
             Integer override,
             String dimension,
             int chunkX,

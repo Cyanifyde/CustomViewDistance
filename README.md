@@ -6,9 +6,9 @@ PlayerViewDistance is a dedicated-server-only Fabric mod that honors each player
 
 | Artifact | Minecraft | Java | Mappings |
 | --- | --- | --- | --- |
-| `playerviewdistance-2.0.0+mc1.21.11.jar` | 1.21.11 | 21 | Mojang mappings, remapped for Fabric |
-| `playerviewdistance-2.0.0+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 | Loom unobfuscated |
-| `playerviewdistance-2.0.0+mc26.2.jar` | 26.2 | 25 | Loom unobfuscated |
+| `playerviewdistance-2.0.1+mc1.21.11.jar` | 1.21.11 | 21 | Mojang mappings, remapped for Fabric |
+| `playerviewdistance-2.0.1+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 | Loom unobfuscated |
+| `playerviewdistance-2.0.1+mc26.2.jar` | 26.2 | 25 | Loom unobfuscated |
 
 Fabric Loader 0.19.3 and the matching Fabric API are required. Do not install PVD on clients.
 
@@ -22,6 +22,11 @@ clamp(persistent override ?? client request,
       config max,
       server view-distance)
 ```
+
+That value is a ceiling, not a forced distance. A dimension-specific setting
+or compatible load governor may lower the active distance further. PVD clamps
+both chunk tracking and outgoing client-cache-radius packets, so another mod
+cannot raise either path past the ceiling.
 
 Client chunk sending and server loading are intentionally separate:
 
@@ -63,15 +68,26 @@ All commands require game-master permission:
 
 ## Compatibility
 
-PVD 2 has explicit integration for C2ME's no-tick view distance and VMP's per-player area watcher. Missing required hooks fail at startup with an actionable error instead of silently changing semantics.
+PVD 2 has explicit integration for C2ME's no-tick view distance and VMP's per-player area watcher. Missing required hooks fail at startup with an actionable error instead of silently changing semantics. Runtime changes to a world's view or simulation distance trigger an immediate, dimension-local re-plan without touching tickets owned by other mods.
 
-Supported optimization and chunk-loading integrations include:
+Current compatibility targets include:
 
 - Lithium `0.25.3+mc26.2`
 - FerriteCore `9.0.0`
 - C2ME `0.4.2-alpha.0.43+26.2`
 - VMP `0.2.0+beta.7.236+26.2`
+- ServerCore `1.5.19+26.2`
+- Adaptive View `2.4.4+26.2`
+- Dynamic Performance `0.2.0+26.1`
+- View Distance Fix `1.0.2+26.2`
+- Entity View Distance `1.9.0+26.2`
+- World Specific View Distance `0.2.1+1.21.11`
 - Chunk Loaders `1.2.9` with its pinned library dependencies
+- Custom Dimensions `1.2.1` and Dimension Daddy `2.0.0+26.2`
+
+The dedicated-server stacks from Adrenaline `26.4.2+mc26.2.fabric` and
+Optimize My Server `26.2.0.1` are also exercised as release compatibility
+targets.
 
 ## Build
 

@@ -16,9 +16,13 @@ public final class SourceTransitionPlanner {
     public TransitionResult plan(
             List<SourceAssignment> assignments,
             List<AppliedSourceSnapshot> applied,
-            int simulationDistance,
+            List<PlayerSnapshot> players,
             GovernorDecision governor
     ) {
+        Map<PlayerKey, Integer> simulationDistances = new HashMap<>();
+        for (PlayerSnapshot player : players) {
+            simulationDistances.put(player.player(), player.simulationDistance());
+        }
         boolean[] claimed = new boolean[applied.size()];
         Map<PlayerKey, AppliedSourceSnapshot> working = new LinkedHashMap<>();
         List<SourceMutation> mutations = new ArrayList<>();
@@ -64,8 +68,10 @@ public final class SourceTransitionPlanner {
                 .thenComparing(SourceAssignment::desired, LoadSource.ORDER));
 
         if (!paused) {
-            int minimumUsefulRadius = simulationDistance + LoadSource.LOADING_MARGIN + 1;
             for (SourceAssignment assignment : missing) {
+                int simulationDistance = simulationDistances.getOrDefault(
+                        assignment.desired().owner(), 2);
+                int minimumUsefulRadius = simulationDistance + LoadSource.LOADING_MARGIN + 1;
                 int preferred = Math.max(assignment.initialTicketRadius(), minimumUsefulRadius);
                 int radius = largestAffordableRadius(
                         preferred,
