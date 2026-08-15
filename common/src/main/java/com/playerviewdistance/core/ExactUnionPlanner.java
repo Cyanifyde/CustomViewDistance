@@ -17,9 +17,9 @@ import java.util.Map;
 public final class ExactUnionPlanner {
     private static final int INDEX_BUCKET_SIZE = 32;
 
-    public UnionResult plan(Collection<PlayerSnapshot> players, int simulationDistance) {
+    public UnionResult plan(Collection<PlayerSnapshot> players) {
         long started = System.nanoTime();
-        List<LoadSource> grouped = groupIdenticalCenters(players, simulationDistance);
+        List<LoadSource> grouped = groupIdenticalCenters(players);
         if (grouped.isEmpty()) {
             return new UnionResult(List.of(), 0, System.nanoTime() - started);
         }
@@ -117,8 +117,7 @@ public final class ExactUnionPlanner {
      */
     public List<PlayerCoverage> achievedCoverage(
             Collection<PlayerSnapshot> players,
-            Collection<AppliedSourceSnapshot> applied,
-            int simulationDistance
+            Collection<AppliedSourceSnapshot> applied
     ) {
         Map<String, LongOpenHashSet> dimensions = new HashMap<>();
         for (AppliedSourceSnapshot source : applied) {
@@ -133,7 +132,7 @@ public final class ExactUnionPlanner {
 
         List<PlayerCoverage> coverage = new ArrayList<>(players.size());
         for (PlayerSnapshot player : players) {
-            int floor = Math.min(player.effectiveViewDistance(), simulationDistance);
+            int floor = Math.min(player.effectiveViewDistance(), player.simulationDistance());
             int low = floor;
             int high = player.effectiveViewDistance();
             LongOpenHashSet cells = dimensions.get(player.dimension());
@@ -162,10 +161,10 @@ public final class ExactUnionPlanner {
         return true;
     }
 
-    private static List<LoadSource> groupIdenticalCenters(Collection<PlayerSnapshot> players, int simulationDistance) {
+    private static List<LoadSource> groupIdenticalCenters(Collection<PlayerSnapshot> players) {
         Map<Center, LoadSource> grouped = new HashMap<>();
         for (PlayerSnapshot player : players) {
-            if (player.effectiveViewDistance() <= simulationDistance) {
+            if (player.effectiveViewDistance() <= player.simulationDistance()) {
                 continue;
             }
             LoadSource candidate = LoadSource.desired(player);

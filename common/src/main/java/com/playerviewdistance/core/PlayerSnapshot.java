@@ -8,7 +8,8 @@ public record PlayerSnapshot(
         int chunkX,
         int chunkZ,
         int effectiveViewDistance,
-        int achievedViewDistance
+        int achievedViewDistance,
+        int simulationDistance
 ) {
     public PlayerSnapshot {
         Objects.requireNonNull(player, "player");
@@ -18,6 +19,9 @@ public record PlayerSnapshot(
         }
         if (achievedViewDistance < 0 || achievedViewDistance > effectiveViewDistance) {
             throw new IllegalArgumentException("achievedViewDistance must be in [0, effectiveViewDistance]");
+        }
+        if (simulationDistance < 2 || simulationDistance > 32) {
+            throw new IllegalArgumentException("simulationDistance must be in [2, 32]");
         }
     }
 }

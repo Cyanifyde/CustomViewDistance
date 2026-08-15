@@ -1,8 +1,9 @@
 package com.playerviewdistance.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import com.playerviewdistance.PerPlayerChunkLoader;
 import net.minecraft.server.level.ChunkMap;
-import net.minecraft.server.level.DistanceManager;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import org.spongepowered.asm.mixin.Final;
@@ -12,7 +13,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ChunkMap.class)
 public abstract class ChunkMapMixin {
@@ -20,17 +20,47 @@ public abstract class ChunkMapMixin {
     @Final
     private ServerLevel level;
 
-    @Inject(method = "getPlayerViewDistance", at = @At("HEAD"), cancellable = true)
-    private void playerviewdistance$getPlayerViewDistance(
-            ServerPlayer player,
-            CallbackInfoReturnable<Integer> callback
+    /*
+     * Seed vanilla's calculation with PVD's candidate without cancelling the
+     * method.  The early order lets composable governors reduce that value.
+     */
+    @ModifyExpressionValue(
+            method = "getPlayerViewDistance",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/server/level/ServerPlayer;requestedViewDistance()I"
+            ),
+            order = 1
+    )
+    private int playerviewdistance$provideCandidateDistance(
+            int requestedDistance,
+            ServerPlayer player
     ) {
-        callback.setReturnValue(PerPlayerChunkLoader.getEffectiveViewDistance(player));
+        return PerPlayerChunkLoader.getEffectiveViewDistance(player);
+    }
+
+    /*
+     * This is deliberately a chaining return modifier, not a cancellable
+     * callback: lower results from other governors survive, while attempts to
+     * raise beyond PVD's ceiling are clamped at the final injector phase.
+     */
+    @ModifyReturnValue(
+            method = "getPlayerViewDistance",
+            at = @At("RETURN"),
+            order = 20_000
+    )
+    private int playerviewdistance$enforceFinalCeiling(
+            int resolvedDistance,
+            ServerPlayer player
+    ) {
+        return Math.max(2, Math.min(
+                resolvedDistance,
+                PerPlayerChunkLoader.getEffectiveViewDistance(player)));
     }
 
     @Inject(method = "setServerViewDistance", at = @At("HEAD"))
     private void playerviewdistance$beforeServerViewDistance(int viewDistance, CallbackInfo callback) {
-        PerPlayerChunkLoader.onServerViewDistanceChanging(viewDistance);
+        PerPlayerChunkLoader.onLevelViewDistanceChanging(this.level, viewDistance);
     }
 
     @ModifyArg(
@@ -45,12 +75,15 @@ public abstract class ChunkMapMixin {
             index = 0
     )
     private int playerviewdistance$useSimulationDistanceForGlobalLoading(int ignoredViewDistance) {
-        return this.level.getServer().getPlayerList().getSimulationDistance();
+        Object distanceManager = ((ChunkMap) (Object) this).getDistanceManager();
+        int simulationDistance = ((DistanceManagerAccessor) distanceManager)
+                .playerviewdistance$getSimulationDistance();
+        return Math.max(2, Math.min(32, simulationDistance));
     }
 
     @Inject(method = "setServerViewDistance", at = @At("TAIL"))
     private void playerviewdistance$afterServerViewDistance(int viewDistance, CallbackInfo callback) {
-        PerPlayerChunkLoader.onServerViewDistanceChanged();
+        PerPlayerChunkLoader.onLevelViewDistanceChanged(this.level);
     }
 
     @Inject(method = "move", at = @At("HEAD"))

@@ -27,7 +27,6 @@ public final class PlannerService implements AutoCloseable {
     private volatile boolean closed;
 
     private long cachedPlayerGeneration = -1;
-    private int cachedSimulationDistance = -1;
     private ExactUnionPlanner.UnionResult cachedUnion = new ExactUnionPlanner.UnionResult(List.of(), 0, 0);
 
     public PlannerService() {
@@ -56,7 +55,6 @@ public final class PlannerService implements AutoCloseable {
     }
 
     public long requestPlan(
-            int simulationDistance,
             long appliedRevision,
             List<AppliedSourceSnapshot> appliedSources,
             PlannerMetrics metrics
@@ -68,7 +66,6 @@ public final class PlannerService implements AutoCloseable {
         latestRequest.set(new Request(
                 generation,
                 mailbox.generation(),
-                simulationDistance,
                 appliedRevision,
                 List.copyOf(appliedSources),
                 Objects.requireNonNull(metrics, "metrics")
@@ -156,23 +153,21 @@ public final class PlannerService implements AutoCloseable {
 
     private PlanResult compute(Request request, LatestStateMailbox.Snapshot snapshot) {
         long started = System.nanoTime();
-        if (cachedPlayerGeneration != snapshot.generation()
-                || cachedSimulationDistance != request.simulationDistance()) {
-            cachedUnion = unionPlanner.plan(snapshot.players(), request.simulationDistance());
+        if (cachedPlayerGeneration != snapshot.generation()) {
+            cachedUnion = unionPlanner.plan(snapshot.players());
             cachedPlayerGeneration = snapshot.generation();
-            cachedSimulationDistance = request.simulationDistance();
         }
         long remainingBefore = unionPlanner.exactChangedCells(cachedUnion.sources(), request.appliedSources());
         GovernorDecision decision = governor.evaluate(request.metrics(), remainingBefore);
         List<SourceAssignment> assignments = sourceMatcher.match(
                 cachedUnion.sources(), request.appliedSources(), snapshot.players());
         SourceTransitionPlanner.TransitionResult transitions = transitionPlanner.plan(
-                assignments, request.appliedSources(), request.simulationDistance(), decision);
+                assignments, request.appliedSources(), snapshot.players(), decision);
         long appliedArea = unionPlanner.exactAppliedUnionArea(transitions.projectedSources());
         long remainingAfter = unionPlanner.exactChangedCells(
                 cachedUnion.sources(), transitions.projectedSources());
         List<PlayerCoverage> playerCoverage = unionPlanner.achievedCoverage(
-                snapshot.players(), transitions.projectedSources(), request.simulationDistance());
+                snapshot.players(), transitions.projectedSources());
         return new PlanResult(
                 request.generation(),
                 snapshot.generation(),
@@ -211,7 +206,6 @@ public final class PlannerService implements AutoCloseable {
     private record Request(
             long generation,
             long playerGeneration,
-            int simulationDistance,
             long appliedRevision,
             List<AppliedSourceSnapshot> appliedSources,
             PlannerMetrics metrics

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.1
+
+### Compatibility and correctness
+
+- Make PVD a composable hard ceiling: server load governors may lower a player's active tracking distance, but cannot raise it past PVD's effective distance.
+- Enforce the same ceiling on chunk-cache radius packets so packet-rewriting mods cannot make the client retain terrain beyond the PVD limit.
+- Track view and simulation distances per dimension, including runtime changes made directly through a world's chunk source.
+- Re-plan loading sources transactionally after global or dimension-local distance changes while preserving tickets owned by other mods.
+- Synchronize achieved-radius resets into the coalescing planner mailbox so a removed source cannot seed a stale replacement radius.
+- Keep vanilla's distance range valid when composing with third-party mixins.
+
 ## 2.0.0
 
 ### Correctness

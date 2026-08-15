@@ -3,11 +3,16 @@
   "package": "com.playerviewdistance.mixin",
   "compatibilityLevel": "${java_compatibility}",
   "server": [
+    "ConnectionMixin",
     "ChunkMapMixin",
     "ChunkMapInvoker",
+    "DistanceManagerAccessor",
     "DistanceManagerMixin",
     "PlayerListMixin",
+    "ServerChunkCacheMixin",
     "ServerChunkCacheAccessor",
+    "ServerCommonPacketListenerAccessor",
+    "ServerGamePacketListenerImplMixin",
     "ServerPlayerMixin"
   ],
   "injectors": {

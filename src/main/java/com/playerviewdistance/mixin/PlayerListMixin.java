@@ -9,8 +9,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(PlayerList.class)
 public abstract class PlayerListMixin {
+    @Inject(method = "setViewDistance", at = @At("HEAD"))
+    private void playerviewdistance$viewDistanceChanging(int distance, CallbackInfo callback) {
+        PerPlayerChunkLoader.onServerViewDistanceChanging(distance);
+    }
+
+    @Inject(method = "setViewDistance", at = @At("TAIL"))
+    private void playerviewdistance$viewDistanceChanged(int distance, CallbackInfo callback) {
+        PerPlayerChunkLoader.onServerViewDistanceChanged();
+    }
+
+    @Inject(method = "setSimulationDistance", at = @At("HEAD"))
+    private void playerviewdistance$simulationDistanceChanging(int distance, CallbackInfo callback) {
+        PerPlayerChunkLoader.onServerSimulationDistanceChanging(distance);
+    }
+
     @Inject(method = "setSimulationDistance", at = @At("TAIL"))
     private void playerviewdistance$simulationDistanceChanged(int distance, CallbackInfo callback) {
-        PerPlayerChunkLoader.onSimulationDistanceChanged(distance);
+        PerPlayerChunkLoader.onServerSimulationDistanceChanged();
     }
 }

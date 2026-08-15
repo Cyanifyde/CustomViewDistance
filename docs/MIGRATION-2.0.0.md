@@ -1,7 +1,7 @@
 # Migrating to PlayerViewDistance 2.0.0
 
 1. Stop the dedicated server and back up its `config` directory.
-2. Remove every older PlayerViewDistance/CustomViewDistance JAR. Install exactly one 2.0.0 artifact matching the server version.
+2. Remove every older PlayerViewDistance/CustomViewDistance JAR. Install exactly one 2.x artifact matching the server version.
 3. Install Fabric Loader 0.19.3 and the matching Fabric API.
 4. Start the server once. If `config/playerviewdistance.json` is absent and `customviewdistance.json` is valid, PVD writes schema 2 first and then archives the old file as `customviewdistance.json.migrated`.
 5. Review `minViewDistance`, `maxViewDistance`, and `telemetryIntervalSeconds`. Removed 1.x settings are intentionally ignored: polling intervals, worker counts, instant/inner radii, and raw ticket batch sizes no longer exist.
