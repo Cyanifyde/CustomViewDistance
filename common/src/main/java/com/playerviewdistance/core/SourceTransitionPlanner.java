@@ -8,8 +8,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
-/** Computes all source ownership and budget-prioritization work off the server thread. */
 public final class SourceTransitionPlanner {
     private final DeficitRoundRobin growthScheduler = new DeficitRoundRobin();
 
@@ -45,8 +45,6 @@ public final class SourceTransitionPlanner {
             }
         }
 
-        // Removals are correctness work and are deliberately not governor-gated:
-        // retaining one could overfetch or leave a stale source behind.
         for (int index = 0; index < applied.size(); index++) {
             if (!claimed[index]) {
                 AppliedSourceSnapshot source = applied.get(index);
@@ -116,12 +114,12 @@ public final class SourceTransitionPlanner {
                 working.put(grown.owner(), grown);
             }
         } else {
-            growthScheduler.allocate(List.of(), 0);
+            growthScheduler.allocate(Collections.<DeficitRoundRobin.GrowthCandidate>emptyList(), 0);
         }
 
         List<AppliedSourceSnapshot> projected = new ArrayList<>(working.values());
         projected.sort(APPLIED_ORDER);
-        return new TransitionResult(List.copyOf(mutations), List.copyOf(projected));
+        return new TransitionResult(mutations, projected);
     }
 
     private static int findExact(
@@ -201,9 +199,18 @@ public final class SourceTransitionPlanner {
             .thenComparingInt(AppliedSourceSnapshot::chunkZ)
             .thenComparing(AppliedSourceSnapshot::owner);
 
-    public record TransitionResult(
-            List<SourceMutation> mutations,
-            List<AppliedSourceSnapshot> projectedSources
-    ) {
+    public static final class TransitionResult {
+        private final List<SourceMutation> mutations;
+        private final List<AppliedSourceSnapshot> projectedSources;
+
+        public TransitionResult(List<SourceMutation> mutations,
+                                List<AppliedSourceSnapshot> projectedSources) {
+            this.mutations = Collections.unmodifiableList(new ArrayList<SourceMutation>(mutations));
+            this.projectedSources = Collections.unmodifiableList(
+                    new ArrayList<AppliedSourceSnapshot>(projectedSources));
+        }
+
+        public List<SourceMutation> mutations() { return mutations; }
+        public List<AppliedSourceSnapshot> projectedSources() { return projectedSources; }
     }
 }

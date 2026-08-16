@@ -36,9 +36,7 @@ public final class AdaptiveGovernor {
         updateBacklog(metrics.pendingChunkWork());
         if (!learnedThisSample && metrics.pendingChunkWork() <= backlogBaseline
                 && learnedNanosPerCell > INITIAL_NANOS_PER_CELL) {
-            // A world-generation spike must not permanently strand an atomic source
-            // replacement. Once pressure drains, retire stale pessimism quickly enough
-            // for the 40-tick convergence target to become reachable again.
+
             learnedNanosPerCell = Math.max(
                     INITIAL_NANOS_PER_CELL,
                     learnedNanosPerCell * 0.85
@@ -65,13 +63,7 @@ public final class AdaptiveGovernor {
         long capacity = timeBudget <= 0
                 ? 0
                 : (long) Math.floor(timeBudget * capacityMultiplier * sprintMultiplier / learnedNanosPerCell);
-        // The exact-union delta can be smaller than the graph work of the next
-        // atomic ticket mutation when another source already covers most of a
-        // growth ring. Capping capacity to that delta would strand the final
-        // ring forever (for example, 19 uncovered cells behind a 64-cell
-        // radius change). The transition planner accounts every mutation using
-        // its predicted graph-cell cost, so the learned time capacity is the
-        // correct upper bound whenever any union work remains.
+
         long graphCellBudget = remainingChangedCells <= 0 ? 0 : Math.max(0, capacity);
 
         return new GovernorDecision(

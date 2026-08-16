@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -49,53 +50,53 @@ public final class PvdCommand {
     private static int executeList(CommandSourceStack source) {
         List<PerPlayerChunkLoader.PlayerStatus> players = PerPlayerChunkLoader.getPlayerStates();
         if (players.isEmpty()) {
-            source.sendSuccess(() -> Component.literal("No players are currently tracked."), false);
+            source.sendSuccess(() -> Component.literal("No players."), false);
             return 0;
         }
 
-        source.sendSuccess(() -> Component.literal("PlayerViewDistance players:"), false);
-        for (PerPlayerChunkLoader.PlayerStatus player : players) {
-            String override = player.override() == null ? "" : ", override=" + player.override();
-            String line = String.format(Locale.ROOT,
-                    "%s: requested=%d, desired=%d, applied=%d, simulation=%d%s, %s [%d,%d]",
-                    player.name(), player.requestedViewDistance(), player.desiredViewDistance(),
-                    player.appliedViewDistance(), player.simulationDistance(), override,
-                    player.dimension(), player.chunkX(), player.chunkZ());
+        double average = players.stream()
+                .mapToInt(PerPlayerChunkLoader.PlayerStatus::appliedViewDistance)
+                .average()
+                .orElse(0.0);
+        source.sendSuccess(() -> Component.literal("Average is " + formatDistance(average) + "."), false);
+        List<PerPlayerChunkLoader.PlayerStatus> highest = players.stream()
+                .sorted(Comparator.comparingInt(PerPlayerChunkLoader.PlayerStatus::appliedViewDistance)
+                        .reversed()
+                        .thenComparing(PerPlayerChunkLoader.PlayerStatus::name,
+                                String.CASE_INSENSITIVE_ORDER))
+                .limit(10)
+                .toList();
+        for (PerPlayerChunkLoader.PlayerStatus player : highest) {
+            String line = "Player " + player.name() + " has " + player.appliedViewDistance() + ".";
             source.sendSuccess(() -> Component.literal(line), false);
         }
-        return players.size();
+        return highest.size();
     }
 
     private static int executeStatus(CommandSourceStack source) {
-        PerPlayerChunkLoader.StatusSnapshot status = PerPlayerChunkLoader.status();
-        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "PVD %s | generation=%d/%d | sources=%d/%d | union=%d/%d | remaining=%d",
-                status.governorState(), status.appliedGeneration(), status.requestedGeneration(),
-                status.appliedSourceCount(), status.desiredSourceCount(), status.appliedUnionArea(),
-                status.desiredUnionArea(), status.remainingChangedCells())), false);
-        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "MSPT avg=%.2f p95=%.2f | backlog=%d | loaded=%d | view cap=%d | simulation=%d",
-                millis(status.averageTickNanos()), millis(status.p95TickNanos()),
-                status.pendingChunkWork(), status.loadedChunks(), status.serverViewDistance(),
-                status.simulationDistance())), false);
-        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "entities=%d (mobs=%d, items=%d) | ticket mutations=%d | planner=%.3fms | PVD main=%.3fms",
-                status.entityCount(), status.mobCount(), status.itemCount(), status.explicitTicketMutations(),
-                millis(status.plannerNanos()), millis(status.pvdServerThreadNanos()))), false);
-        return 1;
+        if (source.getEntity() instanceof ServerPlayer player) {
+            for (PerPlayerChunkLoader.PlayerStatus status : PerPlayerChunkLoader.getPlayerStates()) {
+                if (status.uuid().equals(player.getUUID())) {
+                    source.sendSuccess(() -> Component.literal(
+                            "Currently at " + status.appliedViewDistance() + "."), false);
+                    return 1;
+                }
+            }
+            source.sendSuccess(() -> Component.literal("Currently unavailable."), false);
+            return 0;
+        }
+        return executeList(source);
     }
 
     private static int executeSet(CommandSourceStack source, ServerPlayer target, int distance) {
         PerPlayerChunkLoader.setOperatorOverride(target.getUUID(), distance);
-        source.sendSuccess(() -> Component.literal(
-                "Persistently set " + target.getGameProfile().name() + " to view distance " + distance), true);
+        source.sendSuccess(() -> Component.literal("Set to " + distance + "."), true);
         return 1;
     }
 
     private static int executeReset(CommandSourceStack source, ServerPlayer target) {
         PerPlayerChunkLoader.removeOperatorOverride(target.getUUID());
-        source.sendSuccess(() -> Component.literal(
-                "Removed the persistent view-distance override for " + target.getGameProfile().name()), true);
+        source.sendSuccess(() -> Component.literal("Reset."), true);
         return 1;
     }
 
@@ -106,15 +107,14 @@ public final class PvdCommand {
             return 0;
         }
         PerPlayerChunkLoader.onConfigReloaded(outcome);
-        var config = outcome.config();
-        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "Reloaded schema %d: min=%d, max=%d, governor=%s, telemetry=%ds",
-                config.schemaVersion(), config.minViewDistance(), config.maxViewDistance(),
-                config.governorProfile(), config.telemetryIntervalSeconds())), true);
+        source.sendSuccess(() -> Component.literal("Reloaded."), true);
         return 1;
     }
 
-    private static double millis(long nanos) {
-        return nanos / 1_000_000.0;
+    private static String formatDistance(double distance) {
+        if (distance == Math.rint(distance)) {
+            return Integer.toString((int) distance);
+        }
+        return String.format(Locale.ROOT, "%.1f", distance);
     }
 }

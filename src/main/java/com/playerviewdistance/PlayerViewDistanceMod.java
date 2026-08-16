@@ -16,6 +16,9 @@ public final class PlayerViewDistanceMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        PlatformEnvironment.install(
+                net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir(),
+                net.fabricmc.loader.api.FabricLoader.getInstance()::isModLoaded);
         ViewDistanceConfig.initialize();
 
         ServerLifecycleEvents.SERVER_STARTED.register(PerPlayerChunkLoader::init);
@@ -31,9 +34,5 @@ public final class PlayerViewDistanceMod implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(PerPlayerChunkLoader::onServerTick);
 
         CommandRegistrationCallback.EVENT.register(PvdCommand::register);
-
-        var config = ViewDistanceConfig.get();
-        LOGGER.info("PlayerViewDistance 2 initialized (schema={}, min={}, max={}, governor={})",
-                config.schemaVersion(), config.minViewDistance(), config.maxViewDistance(), config.governorProfile());
     }
 }

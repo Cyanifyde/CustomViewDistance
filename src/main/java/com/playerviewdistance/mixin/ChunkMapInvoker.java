@@ -13,4 +13,7 @@ public interface ChunkMapInvoker {
 
     @Invoker("updateChunkTracking")
     void playerviewdistance$updateChunkTracking(ServerPlayer player);
+
+    @Invoker("getPlayerViewDistance")
+    int playerviewdistance$getPlayerViewDistance(ServerPlayer player);
 }

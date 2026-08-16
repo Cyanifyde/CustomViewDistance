@@ -1,0 +1,11 @@
+plugins {
+    id 'java-library'
+    id 'com.gradleup.shadow'
+}
+
+ext.pvdPaperApiVersion = '1.21.11-R0.1-SNAPSHOT'
+ext.pvdPaperMetadataVersion = '1.21.11'
+ext.pvdArtifactMinecraftVersion = '1.21.11'
+ext.pvdJavaVersion = 21
+
+apply from: rootProject.file('gradle/paper-module.gradle')

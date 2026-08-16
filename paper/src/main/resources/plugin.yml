@@ -1,0 +1,16 @@
+name: PlayerViewDistance
+version: '${version}'
+main: com.playerviewdistance.paper.PaperPlayerViewDistancePlugin
+description: Server-only per-player native loading ceilings with off-thread exact-union planning.
+license: Apache-2.0
+api-version: '${paper_api_version}'
+folia-supported: true
+commands:
+  pvd:
+    description: Manage PlayerViewDistance
+    usage: /pvd <set|reset|list|reload|status>
+    permission: playerviewdistance.admin
+permissions:
+  playerviewdistance.admin:
+    description: Manage PlayerViewDistance
+    default: op

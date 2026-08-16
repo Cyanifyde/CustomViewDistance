@@ -1,0 +1,27 @@
+modLoader="javafml"
+loaderVersion="[3,)"
+license="Apache-2.0"
+
+[[mods]]
+modId="playerviewdistance"
+version="${version}"
+displayName="Player View Distance"
+authors="Cyanifyde and contributors"
+description='''Server-only per-player chunk loading with exact overlap merging and adaptive off-thread planning.'''
+
+[[mixins]]
+config="playerviewdistance.mixins.json"
+
+[[dependencies.playerviewdistance]]
+    modId="neoforge"
+    type="required"
+    versionRange="${neoforge_range}"
+    ordering="NONE"
+    side="SERVER"
+
+[[dependencies.playerviewdistance]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_range}"
+    ordering="NONE"
+    side="SERVER"

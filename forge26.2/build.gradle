@@ -1,0 +1,15 @@
+plugins {
+    id 'net.fabricmc.fabric-loom'
+    id 'maven-publish'
+}
+
+ext.pvdMinecraftVersion = '26.2'
+ext.pvdArtifactMinecraftVersion = '26.2'
+ext.pvdMinecraftRange = '[26.2,26.3)'
+ext.pvdForgeVersion = '65.1.1'
+ext.pvdForgeLoaderRange = '[65,)'
+ext.pvdForgeEventBusVersion = '7.0.5'
+ext.pvdJavaVersion = 25
+ext.pvdResourcePackFormat = 107
+
+apply from: rootProject.file('gradle/forge-loom-module.gradle')

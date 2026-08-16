@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
 public final class SourceMatcher {
     public List<SourceAssignment> match(
@@ -18,10 +19,6 @@ public final class SourceMatcher {
             byPlayer.put(player.player(), player);
         }
 
-        // Reserve stable geometry and ownership globally before allowing a
-        // nearby source to act as a replacement. A one-pass greedy matcher can
-        // otherwise let an earlier, newly joined source consume the exact
-        // ticket of a later stationary source.
         int[] matches = new int[desired.size()];
         Arrays.fill(matches, -1);
         for (int index = 0; index < desired.size(); index++) {
@@ -67,7 +64,7 @@ public final class SourceMatcher {
                     || existing.chunkZ() != source.chunkZ());
             assignments.add(new SourceAssignment(source, existing, initial, replacement));
         }
-        return List.copyOf(assignments);
+        return Collections.unmodifiableList(new ArrayList<SourceAssignment>(assignments));
     }
 
     private static int findExact(LoadSource desired, List<AppliedSourceSnapshot> applied, boolean[] used) {

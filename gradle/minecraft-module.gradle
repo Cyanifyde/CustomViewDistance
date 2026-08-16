@@ -16,6 +16,8 @@ loom {
 }
 
 dependencies {
+    implementation 'it.unimi.dsi:fastutil:8.5.16'
+    implementation 'com.google.code.gson:gson:2.13.2'
     minecraft "com.mojang:minecraft:${pvdMinecraftVersion}"
     if (pvdUseMojangMappings) {
         mappings loom.officialMojangMappings()

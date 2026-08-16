@@ -2,8 +2,6 @@ package com.playerviewdistance;
 
 import com.playerviewdistance.config.ConfigData;
 import com.playerviewdistance.config.ConfigRepository;
-import net.fabricmc.loader.api.FabricLoader;
-
 import java.nio.file.Path;
 
 public final class ViewDistanceConfig {
@@ -38,14 +36,14 @@ public final class ViewDistanceConfig {
     }
 
     public static Path configDirectory() {
-        return FabricLoader.getInstance().getConfigDir();
+        return PlatformEnvironment.configDirectory();
     }
 
     private static void log(ConfigRepository.LoadOutcome outcome) {
         if (outcome.success()) {
-            PlayerViewDistanceMod.LOGGER.info("{}", outcome.message());
+            PlatformEnvironment.logger().debug("{}", outcome.message());
         } else {
-            PlayerViewDistanceMod.LOGGER.error("{}", outcome.message());
+            PlatformEnvironment.logger().error("{}", outcome.message());
         }
     }
 }

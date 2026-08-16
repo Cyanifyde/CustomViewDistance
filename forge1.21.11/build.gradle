@@ -1,0 +1,15 @@
+plugins {
+    id 'java'
+    id 'net.minecraftforge.gradle'
+    id 'maven-publish'
+}
+
+ext.pvdMinecraftVersion = '1.21.11'
+ext.pvdArtifactMinecraftVersion = '1.21.11'
+ext.pvdMinecraftRange = '[1.21.11,1.22)'
+ext.pvdForgeVersion = '61.2.1'
+ext.pvdForgeLoaderRange = '[61,)'
+ext.pvdJavaVersion = 21
+ext.pvdResourcePackFormat = 94
+
+apply from: rootProject.file('gradle/forge-module.gradle')

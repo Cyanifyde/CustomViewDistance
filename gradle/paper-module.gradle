@@ -1,0 +1,62 @@
+version = "${rootProject.version}+mc${pvdArtifactMinecraftVersion}"
+group = rootProject.group
+
+base {
+    archivesName = 'playerviewdistance-paper'
+}
+
+dependencies {
+    implementation 'it.unimi.dsi:fastutil:8.5.16'
+    implementation 'com.google.code.gson:gson:2.13.2'
+    compileOnly "io.papermc.paper:paper-api:${pvdPaperApiVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [
+                rootProject.file('common/src/main/java'),
+                rootProject.file('paper/src/main/java')
+        ]
+        resources.srcDirs = [rootProject.file('paper/src/main/resources')]
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'paper_api_version', pvdPaperMetadataVersion
+    filesMatching('plugin.yml') {
+        expand(version: project.version, paper_api_version: pvdPaperMetadataVersion)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = pvdJavaVersion as int
+    options.encoding = 'UTF-8'
+}
+
+java {
+    withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(pvdJavaVersion as int)
+    }
+}
+
+tasks.named('jar', Jar) {
+    archiveClassifier = 'plain'
+}
+
+tasks.named('shadowJar') {
+    archiveClassifier = ''
+    archiveFileName = "playerviewdistance-paper-${rootProject.version}+mc${pvdArtifactMinecraftVersion}.jar"
+    relocate 'it.unimi.dsi.fastutil', 'com.playerviewdistance.internal.lib.fastutil'
+    relocate 'com.google.gson', 'com.playerviewdistance.internal.lib.gson'
+    minimize {
+        exclude dependency('com.google.code.gson:gson:.*')
+    }
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+}
+
+tasks.named('assemble') {
+    dependsOn tasks.named('shadowJar')
+}
