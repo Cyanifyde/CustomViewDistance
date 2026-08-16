@@ -21,7 +21,9 @@ public abstract class DistanceManagerMixin {
 
     @Inject(method = "updateSimulationDistance", at = @At("TAIL"))
     private void playerviewdistance$keepLoadingFloorAtSimulationDistance(int distance, CallbackInfo callback) {
-        this.updatePlayerTickets(distance);
+        if (PerPlayerChunkLoader.shouldMaintainVanillaPlayerLoadingFloor()) {
+            this.updatePlayerTickets(distance);
+        }
     }
 
     @Inject(method = "runAllUpdates", at = @At("HEAD"))

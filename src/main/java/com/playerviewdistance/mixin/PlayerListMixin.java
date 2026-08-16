@@ -1,6 +1,7 @@
 package com.playerviewdistance.mixin;
 
 import com.playerviewdistance.PerPlayerChunkLoader;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -9,6 +10,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(PlayerList.class)
 public abstract class PlayerListMixin {
+    @Inject(
+            method = "remove(Lnet/minecraft/server/level/ServerPlayer;)V",
+            at = @At("HEAD")
+    )
+    private void playerviewdistance$playerRemoved(ServerPlayer player, CallbackInfo callback) {
+        PerPlayerChunkLoader.onPlayerLeave(player);
+    }
+
     @Inject(method = "setViewDistance", at = @At("HEAD"))
     private void playerviewdistance$viewDistanceChanging(int distance, CallbackInfo callback) {
         PerPlayerChunkLoader.onServerViewDistanceChanging(distance);

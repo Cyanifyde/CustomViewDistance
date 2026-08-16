@@ -12,6 +12,18 @@ allprojects {
             url = 'https://maven.fabricmc.net/'
         }
         mavenCentral()
+        maven {
+            name = 'PaperMC'
+            url = 'https://repo.papermc.io/repository/maven-public/'
+        }
+        maven {
+            name = 'Forge'
+            url = 'https://maven.minecraftforge.net/'
+        }
+        maven {
+            name = 'NeoForge'
+            url = 'https://maven.neoforged.net/releases/'
+        }
     }
 }
 
@@ -23,15 +35,47 @@ tasks.register('releaseArtifacts', Sync) {
     dependsOn ':mc1.21.11:remapJar', ':mc1.21.11:remapSourcesJar'
     dependsOn ':mc26.1:jar', ':mc26.1:sourcesJar'
     dependsOn ':mc26.2:jar', ':mc26.2:sourcesJar'
+    dependsOn ':forge1.21.11:jar', ':forge1.21.11:sourcesJar'
+    dependsOn ':forge26.1:jar', ':forge26.1:sourcesJar'
+    dependsOn ':forge26.2:jar', ':forge26.2:sourcesJar'
+    dependsOn ':neoforge1.21.11:jar', ':neoforge1.21.11:sourcesJar'
+    dependsOn ':neoforge26.1:jar', ':neoforge26.1:sourcesJar'
+    dependsOn ':neoforge26.2:jar', ':neoforge26.2:sourcesJar'
+    dependsOn ':paper1.21.11:shadowJar', ':paper1.21.11:sourcesJar'
+    dependsOn ':paper26.x:shadowJar', ':paper26.x:sourcesJar'
     from project(':mc1.21.11').layout.buildDirectory.dir('libs')
     from project(':mc26.1').layout.buildDirectory.dir('libs')
     from project(':mc26.2').layout.buildDirectory.dir('libs')
+    from project(':forge1.21.11').layout.buildDirectory.dir('libs')
+    from project(':forge26.1').layout.buildDirectory.dir('libs')
+    from project(':forge26.2').layout.buildDirectory.dir('libs')
+    from project(':neoforge1.21.11').layout.buildDirectory.dir('libs')
+    from project(':neoforge26.1').layout.buildDirectory.dir('libs')
+    from project(':neoforge26.2').layout.buildDirectory.dir('libs')
+    from project(':paper1.21.11').layout.buildDirectory.dir('libs')
+    from project(':paper26.x').layout.buildDirectory.dir('libs')
     include "playerviewdistance-${rootProject.version}+mc1.21.11.jar"
     include "playerviewdistance-${rootProject.version}+mc1.21.11-sources.jar"
     include "playerviewdistance-${rootProject.version}+mc26.1.jar"
     include "playerviewdistance-${rootProject.version}+mc26.1-sources.jar"
     include "playerviewdistance-${rootProject.version}+mc26.2.jar"
     include "playerviewdistance-${rootProject.version}+mc26.2-sources.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc1.21.11.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc1.21.11-sources.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc26.1.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc26.1-sources.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc26.2.jar"
+    include "playerviewdistance-forge-${rootProject.version}+mc26.2-sources.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc1.21.11.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc1.21.11-sources.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc26.1.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc26.1-sources.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc26.2.jar"
+    include "playerviewdistance-neoforge-${rootProject.version}+mc26.2-sources.jar"
+    include "playerviewdistance-paper-${rootProject.version}+mc1.21.11.jar"
+    include "playerviewdistance-paper-${rootProject.version}+mc1.21.11-sources.jar"
+    include "playerviewdistance-paper-${rootProject.version}+mc26.x.jar"
+    include "playerviewdistance-paper-${rootProject.version}+mc26.x-sources.jar"
     into layout.buildDirectory.dir('release')
     duplicatesStrategy = DuplicatesStrategy.FAIL
 }

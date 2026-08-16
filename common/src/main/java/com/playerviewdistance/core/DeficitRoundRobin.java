@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Collections;
 
 public final class DeficitRoundRobin {
     private static final long MIN_QUANTUM = 64;
@@ -18,7 +19,7 @@ public final class DeficitRoundRobin {
     public List<GrowthGrant> allocate(List<GrowthCandidate> candidates, long graphCellBudget) {
         if (candidates.isEmpty() || graphCellBudget <= 0) {
             retainOnly(candidates);
-            return List.of();
+            return Collections.emptyList();
         }
 
         retainOnly(candidates);
@@ -65,7 +66,7 @@ public final class DeficitRoundRobin {
                         ChunkCells.changedCells(candidate.currentTicketRadius(), radii[i])));
             }
         }
-        return List.copyOf(grants);
+        return Collections.unmodifiableList(new ArrayList<GrowthGrant>(grants));
     }
 
     private void retainOnly(List<GrowthCandidate> candidates) {
@@ -86,19 +87,42 @@ public final class DeficitRoundRobin {
         return first + second;
     }
 
-    public record GrowthCandidate(
-            PlayerKey owner,
-            int currentTicketRadius,
-            int targetTicketRadius,
-            long remainingUnionArea
-    ) {
-        public GrowthCandidate {
+    public static final class GrowthCandidate {
+        private final PlayerKey owner;
+        private final int currentTicketRadius;
+        private final int targetTicketRadius;
+        private final long remainingUnionArea;
+
+        public GrowthCandidate(PlayerKey owner, int currentTicketRadius,
+                               int targetTicketRadius, long remainingUnionArea) {
+            this.owner = java.util.Objects.requireNonNull(owner, "owner");
             if (currentTicketRadius < 0 || targetTicketRadius < currentTicketRadius) {
                 throw new IllegalArgumentException("invalid growth radii");
             }
+            this.currentTicketRadius = currentTicketRadius;
+            this.targetTicketRadius = targetTicketRadius;
+            this.remainingUnionArea = remainingUnionArea;
         }
+
+        public PlayerKey owner() { return owner; }
+        public int currentTicketRadius() { return currentTicketRadius; }
+        public int targetTicketRadius() { return targetTicketRadius; }
+        public long remainingUnionArea() { return remainingUnionArea; }
     }
 
-    public record GrowthGrant(PlayerKey owner, int targetTicketRadius, long predictedChangedCells) {
+    public static final class GrowthGrant {
+        private final PlayerKey owner;
+        private final int targetTicketRadius;
+        private final long predictedChangedCells;
+
+        public GrowthGrant(PlayerKey owner, int targetTicketRadius, long predictedChangedCells) {
+            this.owner = java.util.Objects.requireNonNull(owner, "owner");
+            this.targetTicketRadius = targetTicketRadius;
+            this.predictedChangedCells = predictedChangedCells;
+        }
+
+        public PlayerKey owner() { return owner; }
+        public int targetTicketRadius() { return targetTicketRadius; }
+        public long predictedChangedCells() { return predictedChangedCells; }
     }
 }

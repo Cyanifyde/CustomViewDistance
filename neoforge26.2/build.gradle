@@ -1,0 +1,17 @@
+plugins {
+    id 'net.fabricmc.fabric-loom'
+    id 'maven-publish'
+}
+
+ext.pvdMinecraftVersion = '26.2'
+ext.pvdArtifactMinecraftVersion = '26.2'
+ext.pvdMinecraftRange = '[26.2,26.3)'
+ext.pvdNeoForgeVersion = '26.2.0.59'
+ext.pvdNeoForgeRange = '[26.2.0.59,26.3)'
+ext.pvdFmlLoaderVersion = '11.0.16'
+ext.pvdNeoForgeEventBusVersion = '8.0.5'
+ext.pvdUseMojangMappings = false
+ext.pvdJavaVersion = 25
+ext.pvdResourcePackFormat = 107
+
+apply from: rootProject.file('gradle/neoforge-loom-module.gradle')

@@ -2,10 +2,10 @@ package com.playerviewdistance.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Bounded by the number of live players: every UUID has exactly one replaceable state. */
 public final class LatestStateMailbox {
     private final ConcurrentHashMap<PlayerKey, PlayerSnapshot> players = new ConcurrentHashMap<>();
     private final AtomicLong generation = new AtomicLong();
@@ -48,11 +48,21 @@ public final class LatestStateMailbox {
             long after = generation.get();
             if (before == after) {
                 copy.sort((left, right) -> left.player().compareTo(right.player()));
-                return new Snapshot(after, List.copyOf(copy));
+                return new Snapshot(after, copy);
             }
         }
     }
 
-    public record Snapshot(long generation, List<PlayerSnapshot> players) {
+    public static final class Snapshot {
+        private final long generation;
+        private final List<PlayerSnapshot> players;
+
+        public Snapshot(long generation, List<PlayerSnapshot> players) {
+            this.generation = generation;
+            this.players = Collections.unmodifiableList(new ArrayList<PlayerSnapshot>(players));
+        }
+
+        public long generation() { return generation; }
+        public List<PlayerSnapshot> players() { return players; }
     }
 }

@@ -1,0 +1,139 @@
+version = "${rootProject.version}+mc${pvdArtifactMinecraftVersion}"
+group = rootProject.group
+
+def stripFabricManifestAttributes = { java.nio.file.Path jarPath ->
+    def temporary = jarPath.resolveSibling(jarPath.fileName.toString() + '.pvd-manifest.tmp')
+    def input = new java.util.zip.ZipFile(jarPath.toFile())
+    boolean written = false
+    try {
+        def output = new java.util.zip.ZipOutputStream(
+                java.nio.file.Files.newOutputStream(temporary))
+        try {
+            def entries = input.entries()
+            while (entries.hasMoreElements()) {
+                def entry = entries.nextElement()
+                byte[] bytes = input.getInputStream(entry).readAllBytes()
+                if (entry.name == 'META-INF/MANIFEST.MF') {
+                    def platformManifest = new java.util.jar.Manifest(
+                            new ByteArrayInputStream(bytes))
+                    platformManifest.mainAttributes.keySet()
+                            .findAll { it.toString().startsWith('Fabric-') }
+                            .each { platformManifest.mainAttributes.remove(it) }
+                    def manifestBytes = new ByteArrayOutputStream()
+                    platformManifest.write(manifestBytes)
+                    bytes = manifestBytes.toByteArray()
+                }
+                def copy = new java.util.zip.ZipEntry(entry.name)
+                copy.time = entry.time
+                output.putNextEntry(copy)
+                output.write(bytes)
+                output.closeEntry()
+            }
+            written = true
+        } finally {
+            output.close()
+        }
+    } finally {
+        input.close()
+        if (!written) {
+            java.nio.file.Files.deleteIfExists(temporary)
+        }
+    }
+    java.nio.file.Files.move(
+            temporary,
+            jarPath,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+}
+
+base {
+    archivesName = "${rootProject.providers.gradleProperty('archives_base_name').get()}-forge"
+}
+
+dependencies {
+    implementation 'it.unimi.dsi:fastutil:8.5.16'
+    implementation 'com.google.code.gson:gson:2.13.2'
+    minecraft "com.mojang:minecraft:${pvdMinecraftVersion}"
+
+    // Minecraft 26.x is distributed unobfuscated. Loom supplies the exact game
+    // classes without a whole-game decompile; Forge's published runtime modules
+    // supply only the APIs PVD compiles against. Nothing is bundled into PVD.
+    compileOnly "net.minecraftforge:forge:${pvdMinecraftVersion}-${pvdForgeVersion}:universal"
+    compileOnly "net.minecraftforge:fmlcore:${pvdMinecraftVersion}-${pvdForgeVersion}"
+    compileOnly "net.minecraftforge:fmlloader:${pvdMinecraftVersion}-${pvdForgeVersion}"
+    compileOnly "net.minecraftforge:javafmllanguage:${pvdMinecraftVersion}-${pvdForgeVersion}"
+    compileOnly "net.minecraftforge:eventbus:${pvdForgeEventBusVersion}"
+    compileOnly 'org.spongepowered:mixin:0.8.7'
+    compileOnly 'org.jspecify:jspecify:1.0.0'
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = [
+                    rootProject.file('common/src/main/java'),
+                    rootProject.file('src/main/java'),
+                    rootProject.file('forge/src/main/java')
+            ]
+            exclude 'com/playerviewdistance/PlayerViewDistanceMod.java'
+        }
+        resources {
+            srcDirs = [
+                    rootProject.file('src/main/resources'),
+                    rootProject.file('forge/src/main/resources')
+            ]
+            exclude 'fabric.mod.json'
+        }
+    }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_range', pvdMinecraftRange
+    inputs.property 'forge_loader_range', pvdForgeLoaderRange
+    inputs.property 'java_compatibility', "JAVA_${pvdJavaVersion}"
+    inputs.property 'resource_pack_format', pvdResourcePackFormat
+
+    filesMatching(['META-INF/mods.toml', 'playerviewdistance.mixins.json', 'pack.mcmeta']) {
+        expand(
+                version: project.version,
+                minecraft_range: pvdMinecraftRange,
+                forge_loader_range: pvdForgeLoaderRange,
+                java_compatibility: "JAVA_${pvdJavaVersion}",
+                resource_pack_format: pvdResourcePackFormat
+        )
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = pvdJavaVersion as int
+    options.encoding = 'UTF-8'
+}
+
+java {
+    withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(pvdJavaVersion as int)
+    }
+    sourceCompatibility = JavaVersion.toVersion(pvdJavaVersion)
+    targetCompatibility = JavaVersion.toVersion(pvdJavaVersion)
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes['MixinConfigs'] = 'playerviewdistance.mixins.json'
+    }
+
+    // Non-remapping Loom appends its own metadata in a final jar action. Run
+    // after that action and rewrite only the manifest entry, preserving the
+    // reproducible archive ordering and timestamps.
+    doLast {
+        def jarPath = archiveFile.get().asFile.toPath()
+        stripFabricManifestAttributes(jarPath)
+    }
+}
+
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+}

@@ -1,0 +1,10 @@
+{
+  "pack": {
+    "description": "Player View Distance resources",
+    "max_format": ${resource_pack_format},
+    "min_format": [
+      ${resource_pack_format},
+      1
+    ]
+  }
+}

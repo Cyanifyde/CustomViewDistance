@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.1.0
+
+### Platforms and compatibility
+
+- Add production Fabric, Forge, NeoForge, Paper, and Folia backends for Minecraft 1.21.11, 26.1–26.1.2, and 26.2 where the platform exists.
+- Add a thread-safe limiter service whose loading and sending limits compose by minimum without exposing simulation controls.
+- Add a native Moonrise backend, retain C2ME's no-tick behavior, and compose VMP tracking with the final per-player distance.
+- Clamp after third-party distance logic so adaptive governors can lower the result but cannot raise it above PVD's ceiling.
+
+### Correctness and performance
+
+- Replace explicit per-chunk coverage with exact merged loading sources and a single coalescing off-thread planner.
+- Preserve vanilla simulation, entity, block-entity, redstone, fluid, and random-tick boundaries while varying terrain loading and sending.
+- Add generation rejection, bounded latest-state mailboxes, graph-cell and nanosecond budgeting, backlog feedback, and fair source growth.
+- Route NeoForge configuration-task completion onto the server thread to prevent pre-join chunk-graph races.
+- Retire sources through the canonical player-list removal lifecycle, including synthetic players that bypass loader disconnect callbacks.
+- Use native Paper/Folia player loading and sending APIs on each player's owning entity scheduler.
+
+### Operations
+
+- Persist UUID overrides atomically, keep configuration reloads transactional, and retain validated schema 1 migration.
+- Make command responses concise and cap `/pvd list` at the ten highest applied distances.
+- Emit exactly one routine startup message: `PVD is running.`
+
 ## 2.0.1
 
 ### Compatibility and correctness

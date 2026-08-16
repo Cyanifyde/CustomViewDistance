@@ -1,6 +1,10 @@
 package com.playerviewdistance;
 
 import com.playerviewdistance.compat.ConnectionDistanceCeiling;
+import com.playerviewdistance.compat.MoonriseNativeAdapter;
+import com.playerviewdistance.api.DistanceBackend;
+import com.playerviewdistance.api.DistanceSnapshot;
+import com.playerviewdistance.api.PlayerViewDistanceApi;
 import com.playerviewdistance.config.ConfigData;
 import com.playerviewdistance.config.ConfigRepository;
 import com.playerviewdistance.config.OverrideRepository;
@@ -17,14 +21,18 @@ import com.playerviewdistance.core.PlayerKey;
 import com.playerviewdistance.core.PlayerCoverage;
 import com.playerviewdistance.core.PlayerSnapshot;
 import com.playerviewdistance.core.SourceMutation;
+import com.playerviewdistance.runtime.ComposedDistance;
+import com.playerviewdistance.runtime.DefaultPlayerViewDistanceService;
+import com.playerviewdistance.runtime.DistanceComposer;
+import com.playerviewdistance.runtime.ResolvedLimits;
 import com.playerviewdistance.mixin.ChunkMapInvoker;
 import com.playerviewdistance.mixin.DistanceManagerAccessor;
 import com.playerviewdistance.mixin.ServerCommonPacketListenerAccessor;
 import com.playerviewdistance.mixin.ServerChunkCacheAccessor;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
@@ -49,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class PerPlayerChunkLoader {
     /*
@@ -66,11 +75,18 @@ public final class PerPlayerChunkLoader {
     private static final Map<PlayerKey, CapturedPlayer> players = new LinkedHashMap<>();
     private static final Map<PlayerKey, AppliedSource> appliedSources = new LinkedHashMap<>();
     private static final Map<PlayerKey, Integer> operatorOverrides = new HashMap<>();
+    private static final Set<PlayerKey> externallyDirtyPlayers = ConcurrentHashMap.newKeySet();
+    private static final Map<String, Integer> pendingLevelViewDistances = new HashMap<>();
+    private static final Map<String, Integer> pendingLevelSimulationDistances = new HashMap<>();
 
     private static MinecraftServer server;
     private static PlannerService planner;
+    private static DefaultPlayerViewDistanceService distanceService;
     private static OverrideRepository overrideRepository;
-    private static int serverViewDistance = 32;
+    /** Immutable ceiling read from server.properties when PVD starts. */
+    private static int configuredViewDistanceCap = 32;
+    /** Current platform/mod-selected global distance; it may only lower the ceiling. */
+    private static int platformViewDistance = 32;
     private static int simulationDistance = 2;
     private static boolean planDirty;
     private static long requestedGeneration;
@@ -93,6 +109,7 @@ public final class PerPlayerChunkLoader {
     private static Method c2mePendingLoadsMethod;
     private static Method vmpGetWatcherMethod;
     private static Method vmpMovePlayerMethod;
+    private static MoonriseNativeAdapter moonriseAdapter;
     private static PlanResult currentPlan;
     private static PlannerMetrics latestMetrics;
 
@@ -104,6 +121,9 @@ public final class PerPlayerChunkLoader {
         players.clear();
         appliedSources.clear();
         operatorOverrides.clear();
+        externallyDirtyPlayers.clear();
+        pendingLevelViewDistances.clear();
+        pendingLevelSimulationDistances.clear();
         entityCount = 0;
         mobCount = 0;
         itemCount = 0;
@@ -121,47 +141,59 @@ public final class PerPlayerChunkLoader {
         c2mePendingLoadsMethod = null;
         vmpGetWatcherMethod = null;
         vmpMovePlayerMethod = null;
+        moonriseAdapter = null;
         feedbackCells = 0;
         feedbackTicketNanos = 0;
         feedbackGraphNanos = 0;
         runtimeTicks = 0;
-        serverViewDistance = minecraftServer.getPlayerList().getViewDistance();
+        platformViewDistance = clampVanillaDistance(
+                minecraftServer.getPlayerList().getViewDistance());
+        configuredViewDistanceCap = minecraftServer instanceof DedicatedServer dedicatedServer
+                ? clampVanillaDistance(dedicatedServer.getProperties().viewDistance.get())
+                : platformViewDistance;
         simulationDistance = minecraftServer.getPlayerList().getSimulationDistance();
 
         verifyPrivateTicketType();
         rescanEntityCounts(minecraftServer);
         planner = new PlannerService();
+        distanceService = new DefaultPlayerViewDistanceService(
+                uuid -> externallyDirtyPlayers.add(PlayerKey.of(uuid)));
+        PlayerViewDistanceApi.install(distanceService);
         overrideRepository = new OverrideRepository(ViewDistanceConfig.configDirectory());
         OverrideRepository.LoadOutcome overrides = overrideRepository.load();
         if (overrides.success()) {
             operatorOverrides.putAll(overrides.overrides());
-            PlayerViewDistanceMod.LOGGER.info("{} ({} entries)", overrides.message(), operatorOverrides.size());
+            PlatformEnvironment.logger().debug("{} ({} entries)", overrides.message(), operatorOverrides.size());
         } else {
-            PlayerViewDistanceMod.LOGGER.error("{}", overrides.message());
+            PlatformEnvironment.logger().error("{}", overrides.message());
         }
 
-        boolean c2me = FabricLoader.getInstance().isModLoaded("c2me")
-                || FabricLoader.getInstance().isModLoaded("c2me-notickvd");
-        boolean c2meNoTick = FabricLoader.getInstance().isModLoaded("c2me-notickvd");
-        boolean vmp = FabricLoader.getInstance().isModLoaded("vmp");
+        boolean c2me = PlatformEnvironment.isModLoaded("c2me")
+                || PlatformEnvironment.isModLoaded("c2me-notickvd");
+        boolean c2meNoTick = PlatformEnvironment.isModLoaded("c2me-notickvd");
+        boolean vmp = PlatformEnvironment.isModLoaded("vmp");
+        boolean moonrise = PlatformEnvironment.isModLoaded("moonrise");
+        if (moonrise) {
+            moonriseAdapter = MoonriseNativeAdapter.create();
+            PlatformEnvironment.logger().debug(
+                    "Moonrise adapter active: PVD uses its native per-player loader without private tickets");
+        }
         if (c2me) {
-            PlayerViewDistanceMod.LOGGER.info(
+            PlatformEnvironment.logger().debug(
                     "C2ME detected: the simulation-distance player-loading floor remains authoritative; "
                             + "PVD adds loading-only coverage beyond it");
         }
         if (c2meNoTick) {
             initializeC2meNoTickAdapter(minecraftServer);
         }
-        if (vmp) {
+        if (vmp && !moonrise) {
             initializeVmpAdapter(minecraftServer);
-            PlayerViewDistanceMod.LOGGER.info(
+            PlatformEnvironment.logger().debug(
                     "VMP adapter active: its area watcher consumes PVD's per-player tracking distance");
         }
         planDirty = true;
         lastTelemetryNanos = System.nanoTime();
-        PlayerViewDistanceMod.LOGGER.info(
-                "PVD runtime started (server cap={}, simulation floor={}, planner threads=1)",
-                serverViewDistance, simulationDistance);
+        PlatformEnvironment.logger().info("PVD is running.");
     }
 
     public static void shutdown(MinecraftServer minecraftServer) {
@@ -169,31 +201,73 @@ public final class PerPlayerChunkLoader {
             return;
         }
         long started = System.nanoTime();
+        if (moonriseAdapter != null) {
+            try {
+                moonriseAdapter.restoreAll(minecraftServer.getPlayerList().getPlayers());
+            } catch (RuntimeException failure) {
+                PlatformEnvironment.logger().error(
+                        "PVD could not restore Moonrise player view-distance intent during shutdown", failure);
+            }
+        }
         removeAllPrivateSources();
         saveOverridesSynchronously();
         if (planner != null) {
             planner.close(Duration.ofSeconds(5));
             planner = null;
         }
+        if (distanceService != null) {
+            PlayerViewDistanceApi.uninstall(distanceService);
+            distanceService.close();
+            distanceService = null;
+        }
         players.clear();
         appliedSources.clear();
         operatorOverrides.clear();
+        externallyDirtyPlayers.clear();
+        pendingLevelViewDistances.clear();
+        pendingLevelSimulationDistances.clear();
         c2mePendingLoadsMethod = null;
         vmpGetWatcherMethod = null;
         vmpMovePlayerMethod = null;
+        moonriseAdapter = null;
         server = null;
         pvdServerThreadNanos += System.nanoTime() - started;
-        PlayerViewDistanceMod.LOGGER.info("PVD runtime stopped; all private loading tickets were removed");
+        PlatformEnvironment.logger().debug("PVD runtime stopped; all private loading tickets were removed");
     }
 
     public static int getEffectiveViewDistance(ServerPlayer player) {
+        return resolvePlayerDistances(player).sendingDistance();
+    }
+
+    public static int getEffectiveLoadingDistance(ServerPlayer player) {
+        return resolvePlayerDistances(player).loadingDistance();
+    }
+
+    /** Moonrise already derives its loading floor from the untouched tick distance. */
+    public static boolean shouldMaintainVanillaPlayerLoadingFloor() {
+        return !PlatformEnvironment.isModLoaded("moonrise");
+    }
+
+    private static ResolvedPlayerDistances resolvePlayerDistances(ServerPlayer player) {
         PlayerKey key = PlayerKey.of(player.getUUID());
         Integer override = operatorOverrides.get(key);
         int configuredCandidate = ViewDistancePolicy.effectiveDistance(
-                player.requestedViewDistance(), override, ViewDistanceConfig.get(), serverViewDistance);
+                player.requestedViewDistance(), override, ViewDistanceConfig.get(), configuredViewDistanceCap);
         // The ChunkMap value is dimension-local. Mods which lower a particular
         // world's distance therefore remain authoritative without a named API.
-        return Math.min(configuredCandidate, currentLevelViewDistance(player.level()));
+        int ceiling = Math.min(configuredCandidate, currentLevelViewDistance(player.level()));
+        ResolvedLimits limits = distanceService == null
+                ? new ResolvedLimits(null, null, 0)
+                : distanceService.resolve(player.getUUID());
+        ComposedDistance composed = DistanceComposer.compose(
+                ceiling, limits.loadingMaximum(), limits.sendingMaximum());
+        return new ResolvedPlayerDistances(
+                ceiling,
+                limits.loadingMaximum(),
+                limits.sendingMaximum(),
+                composed.loadingDistance(),
+                composed.sendingDistance(),
+                limits.generation());
     }
 
     public static void initializeConnectionCeiling(ServerPlayer player, Connection connection) {
@@ -219,11 +293,24 @@ public final class PerPlayerChunkLoader {
     }
 
     public static void onPlayerLeave(ServerPlayer player) {
+        if (player == null) {
+            return;
+        }
         PlayerKey key = PlayerKey.of(player.getUUID());
+        if (!players.containsKey(key) && !appliedSources.containsKey(key)) {
+            return;
+        }
+        if (moonriseAdapter != null) {
+            moonriseAdapter.forget(player);
+        }
         retireOwnedSource(key, true);
         players.remove(key);
         if (planner != null) {
             planner.removePlayer(key);
+        }
+        externallyDirtyPlayers.remove(key);
+        if (distanceService != null) {
+            distanceService.removeSnapshot(player.getUUID());
         }
         setConnectionCeiling(player, 32);
         invalidateOutstandingPlan();
@@ -231,32 +318,36 @@ public final class PerPlayerChunkLoader {
 
     /** Called from ChunkMap.move at HEAD, before vanilla updates its tracking view. */
     public static void onPlayerMoved(ServerPlayer player) {
+        // ChunkMap.move is also used while the configuration-phase player is
+        // being prepared, before JOIN has made it a live PVD owner. Publishing
+        // a private loading source during that transition can interleave with
+        // vanilla/Lithium's initial player-ticket graph update.
         if (server != null) {
-            capturePlayer(player);
+            captureRegisteredPlayer(player);
         }
     }
 
     /** Called after ServerPlayer has stored a new ClientInformation instance. */
     public static void onClientOptionsChanged(ServerPlayer player) {
-        // updateOptions is also called from the ServerPlayer constructor before
-        // PrepareSpawnTask assigns the packet listener. JOIN performs the first
-        // safe refresh; subsequent option packets refresh immediately here.
-        if (server == null || player.connection == null) {
+        // A packet listener is assigned before the loader JOIN event. Treating
+        // that pre-JOIN options packet as registration can publish a loading
+        // source while vanilla is still constructing the player's graph state.
+        // JOIN reads the already-stored options and performs the first capture.
+        if (server == null || player.connection == null || !isRegistered(player)) {
             return;
         }
-        capturePlayer(player);
+        captureRegisteredPlayer(player);
         refreshChunkTracking(player);
         sendEffectiveCacheRadius(player);
     }
 
     public static void onServerViewDistanceChanging(int newCap) {
         int clamped = clampVanillaDistance(newCap);
-        if (serverViewDistance == clamped) {
+        if (platformViewDistance == clamped) {
             return;
         }
-        serverViewDistance = clamped;
+        platformViewDistance = clamped;
         if (server != null) {
-            removeAllPrivateSources();
             invalidateOutstandingPlan();
             recaptureAllPlayers();
         }
@@ -276,7 +367,6 @@ public final class PerPlayerChunkLoader {
         }
         simulationDistance = clamped;
         if (server != null) {
-            removeAllPrivateSources();
             invalidateOutstandingPlan();
             recaptureAllPlayers();
         }
@@ -292,12 +382,14 @@ public final class PerPlayerChunkLoader {
         if (server == null || currentLevelViewDistance(level) == clampVanillaDistance(newDistance)) {
             return;
         }
-        removePrivateSourcesInDimension(dimensionId(level));
+        pendingLevelViewDistances.put(dimensionId(level), clampVanillaDistance(newDistance));
         invalidateOutstandingPlan();
+        recapturePlayersInLevel(level);
     }
 
     public static void onLevelViewDistanceChanged(ServerLevel level) {
         if (server != null) {
+            pendingLevelViewDistances.remove(dimensionId(level));
             recapturePlayersInLevel(level);
             refreshPlayersInLevel(level);
         }
@@ -307,12 +399,15 @@ public final class PerPlayerChunkLoader {
         if (server == null || currentLevelSimulationDistance(level) == clampVanillaDistance(newDistance)) {
             return;
         }
-        removePrivateSourcesInDimension(dimensionId(level));
+        pendingLevelSimulationDistances.put(
+                dimensionId(level), clampVanillaDistance(newDistance));
         invalidateOutstandingPlan();
+        recapturePlayersInLevel(level);
     }
 
     public static void onLevelSimulationDistanceChanged(ServerLevel level) {
         if (server != null) {
+            pendingLevelSimulationDistances.remove(dimensionId(level));
             recapturePlayersInLevel(level);
         }
     }
@@ -321,7 +416,6 @@ public final class PerPlayerChunkLoader {
         if (!outcome.success() || server == null) {
             return;
         }
-        removeAllPrivateSources();
         invalidateOutstandingPlan();
         recaptureAllPlayers();
         refreshAllChunkTracking();
@@ -403,6 +497,13 @@ public final class PerPlayerChunkLoader {
         }
         long started = System.nanoTime();
         runtimeTicks++;
+        consumeExternalLimitChanges();
+        if (moonriseAdapter != null) {
+            // Moonrise has no change callback for its raw per-player holder.
+            // Observe primitive values once per tick so uncooperative governors
+            // can lower PVD without PVD's previous clamp becoming sticky.
+            recaptureAllPlayers();
+        }
         latestMetrics = captureMetrics(minecraftServer);
         reportGraphFeedback(latestMetrics);
 
@@ -412,7 +513,7 @@ public final class PerPlayerChunkLoader {
             onServerSimulationDistanceChanged();
         }
         int liveViewDistance = minecraftServer.getPlayerList().getViewDistance();
-        if (liveViewDistance != serverViewDistance) {
+        if (liveViewDistance != platformViewDistance) {
             onServerViewDistanceChanging(liveViewDistance);
         }
 
@@ -439,7 +540,7 @@ public final class PerPlayerChunkLoader {
         Throwable failure = planner.lastFailure();
         if (failure != null && failure != reportedPlannerFailure) {
             reportedPlannerFailure = failure;
-            PlayerViewDistanceMod.LOGGER.error("PVD planner failed; optional expansion is paused", failure);
+            PlatformEnvironment.logger().error("PVD planner failed; optional expansion is paused", failure);
             movementBudgetRemaining = 0;
         }
 
@@ -503,7 +604,8 @@ public final class PerPlayerChunkLoader {
                 explicitTicketMutations,
                 plan == null ? 0 : plan.plannerNanos(),
                 lastPvdServerThreadNanos,
-                serverViewDistance,
+                configuredViewDistanceCap,
+                platformViewDistance,
                 simulationDistance
         );
     }
@@ -570,11 +672,18 @@ public final class PerPlayerChunkLoader {
             if (player == null) {
                 continue;
             }
+            // Coverage is a property of the projected physical union, not a
+            // high-water mark. A strict move can retire the old source before
+            // pressure allows its replacement; retaining the former radius
+            // here would report chunks as backed when no PVD ticket covers
+            // them and would keep seeding oversized replacements forever.
             int achieved = Math.min(
                     player.effectiveViewDistance(),
-                    Math.max(player.achievedViewDistance(), entry.achievedViewDistance()));
+                    entry.achievedViewDistance());
             if (achieved != player.achievedViewDistance()) {
-                players.put(entry.player(), player.withAchieved(achieved));
+                CapturedPlayer updated = player.withAchieved(achieved);
+                players.put(entry.player(), updated);
+                republishDistanceSnapshot(entry.player(), updated);
             }
         }
     }
@@ -592,10 +701,38 @@ public final class PerPlayerChunkLoader {
         int chunkX = Math.floorDiv(player.getBlockX(), 16);
         int chunkZ = Math.floorDiv(player.getBlockZ(), 16);
         String dimension = dimensionId(player.level());
-        int effective = getEffectiveViewDistance(player);
-        int localSimulationDistance = currentLevelSimulationDistance(player.level());
+        ResolvedPlayerDistances distances = resolvePlayerDistances(player);
+        if (moonriseAdapter != null) {
+            MoonriseNativeAdapter.Limits limits = moonriseAdapter.observeLimits(player);
+            distances = distances.withAdditionalLimits(
+                    limits.loadingMaximum(), limits.sendingMaximum());
+            // Moonrise sends its radius packet from updateMaps. Raise the
+            // connection ceiling before an expansion so that PVD does not
+            // clamp Moonrise's one-shot packet to the previous radius.
+            setConnectionCeiling(player, distances.pvdSendingCeiling());
+            moonriseAdapter.apply(player, distances.loadingDistance(), distances.sendingDistance());
+
+            // Preserve lower return-value governors which also compose with
+            // Moonrise's ChunkMap method, then feed that result back into the
+            // native loader rather than merely shrinking client packets.
+            int platformDistance = getComposedPlatformDistance(player);
+            if (platformDistance < distances.loadingDistance()
+                    || platformDistance < distances.sendingDistance()) {
+                distances = distances.withAdditionalLimit(platformDistance);
+                moonriseAdapter.apply(player, distances.loadingDistance(), distances.sendingDistance());
+            }
+        } else {
+            distances = distances.withAdditionalLimit(getComposedPlatformDistance(player));
+        }
+        int effective = distances.loadingDistance();
+        int effectiveSending = distances.sendingDistance();
+        int localSimulationDistance = moonriseAdapter == null
+                ? currentLevelSimulationDistance(player.level())
+                : clampVanillaDistance(moonriseAdapter.simulationDistance(player));
         CapturedPlayer old = players.get(key);
-        int achieved = old == null ? 0 : old.achievedViewDistance();
+        int achieved = moonriseAdapter == null
+                ? (old == null ? 0 : old.achievedViewDistance())
+                : effective;
         CapturedPlayer captured = new CapturedPlayer(
                 key,
                 player.getGameProfile().name(),
@@ -604,10 +741,19 @@ public final class PerPlayerChunkLoader {
                 chunkZ,
                 player.requestedViewDistance(),
                 effective,
+                effectiveSending,
                 Math.min(achieved, effective),
                 localSimulationDistance
         );
+        // The packet safety net stores PVD's own composable ceiling, not the
+        // lower value currently chosen by an anonymous adaptive mixin. If the
+        // other governor later recovers, its increase must be allowed up to
+        // PVD's ceiling instead of being stuck at its previous low value.
+        if (moonriseAdapter == null) {
+            setConnectionCeiling(player, distances.pvdSendingCeiling());
+        }
         if (captured.equals(old)) {
+            publishDistanceSnapshot(player, captured, distances);
             return;
         }
 
@@ -615,12 +761,26 @@ public final class PerPlayerChunkLoader {
             handleStrictPlayerDelta(old, captured);
         }
         players.put(key, captured);
-        planner.upsertPlayer(captured.toSnapshot());
-        setConnectionCeiling(player, effective);
-        if (old != null && old.effectiveViewDistance() != effective && player.connection != null) {
-            player.connection.send(new ClientboundSetChunkCacheRadiusPacket(effective));
+        if (moonriseAdapter == null) {
+            planner.upsertPlayer(captured.toSnapshot());
+        }
+        publishDistanceSnapshot(player, captured, distances);
+        if (moonriseAdapter == null && old != null
+                && old.effectiveSendingDistance() != effectiveSending && player.connection != null) {
+            player.connection.send(new ClientboundSetChunkCacheRadiusPacket(effectiveSending));
         }
         invalidateOutstandingPlan();
+    }
+
+    /** Only the loader JOIN callback may create a new PVD player owner. */
+    private static void captureRegisteredPlayer(ServerPlayer player) {
+        if (isRegistered(player)) {
+            capturePlayer(player);
+        }
+    }
+
+    private static boolean isRegistered(ServerPlayer player) {
+        return players.containsKey(PlayerKey.of(player.getUUID()));
     }
 
     private static void handleStrictPlayerDelta(CapturedPlayer old, CapturedPlayer current) {
@@ -707,8 +867,12 @@ public final class PerPlayerChunkLoader {
         }
         Set<PlayerKey> live = new HashSet<>();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            live.add(PlayerKey.of(player.getUUID()));
-            capturePlayer(player);
+            PlayerKey key = PlayerKey.of(player.getUUID());
+            if (!players.containsKey(key)) {
+                continue;
+            }
+            live.add(key);
+            captureRegisteredPlayer(player);
         }
         for (PlayerKey key : List.copyOf(players.keySet())) {
             if (!live.contains(key)) {
@@ -725,7 +889,7 @@ public final class PerPlayerChunkLoader {
             return;
         }
         for (ServerPlayer player : level.players()) {
-            capturePlayer(player);
+            captureRegisteredPlayer(player);
         }
     }
 
@@ -734,12 +898,29 @@ public final class PerPlayerChunkLoader {
             return;
         }
         ServerPlayer player = server.getPlayerList().getPlayer(key.toUuid());
-        if (player != null) {
-            retireOwnedSource(key, true);
-            capturePlayer(player);
+        if (player != null && players.containsKey(key)) {
+            captureRegisteredPlayer(player);
             refreshChunkTracking(player);
             sendEffectiveCacheRadius(player);
             planDirty = true;
+        }
+    }
+
+    private static void consumeExternalLimitChanges() {
+        if (server == null || externallyDirtyPlayers.isEmpty()) {
+            return;
+        }
+        for (PlayerKey key : new ArrayList<>(externallyDirtyPlayers)) {
+            if (!externallyDirtyPlayers.remove(key)) {
+                continue;
+            }
+            ServerPlayer player = server.getPlayerList().getPlayer(key.toUuid());
+            if (player == null || !players.containsKey(key)) {
+                continue;
+            }
+            captureRegisteredPlayer(player);
+            refreshChunkTracking(player);
+            sendEffectiveCacheRadius(player);
         }
     }
 
@@ -748,6 +929,9 @@ public final class PerPlayerChunkLoader {
             return;
         }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (!isRegistered(player)) {
+                continue;
+            }
             refreshChunkTracking(player);
             sendEffectiveCacheRadius(player);
         }
@@ -755,18 +939,68 @@ public final class PerPlayerChunkLoader {
 
     private static void refreshPlayersInLevel(ServerLevel level) {
         for (ServerPlayer player : level.players()) {
+            if (!isRegistered(player)) {
+                continue;
+            }
             refreshChunkTracking(player);
             sendEffectiveCacheRadius(player);
         }
     }
 
     private static void sendEffectiveCacheRadius(ServerPlayer player) {
-        if (player.connection == null) {
+        if (player.connection == null || !isRegistered(player)) {
             return;
         }
-        int effective = getEffectiveViewDistance(player);
-        setConnectionCeiling(player, effective);
+        CapturedPlayer captured = players.get(PlayerKey.of(player.getUUID()));
+        int effective = captured == null
+                ? getEffectiveViewDistance(player)
+                : captured.effectiveSendingDistance();
+        setConnectionCeiling(player, moonriseAdapter == null
+                ? resolvePlayerDistances(player).sendingDistance()
+                : effective);
+        if (moonriseAdapter != null) {
+            // Moonrise sends and orders this packet as part of updateMaps.
+            return;
+        }
         player.connection.send(new ClientboundSetChunkCacheRadiusPacket(effective));
+    }
+
+    private static void publishDistanceSnapshot(
+            ServerPlayer player,
+            CapturedPlayer captured,
+            ResolvedPlayerDistances distances
+    ) {
+        if (distanceService == null) {
+            return;
+        }
+        int backedLoading = Math.min(
+                captured.effectiveViewDistance(),
+                Math.max(2, Math.max(captured.simulationDistance(), captured.achievedViewDistance())));
+        String governorState = currentPlan == null ? "STARTING" : currentPlan.governor().state().name();
+        distanceService.publishSnapshot(new DistanceSnapshot(
+                player.getUUID(),
+                distances.ceiling(),
+                distances.externalLoadingLimit(),
+                distances.externalSendingLimit(),
+                distances.loadingDistance(),
+                distances.sendingDistance(),
+                backedLoading,
+                distances.sendingDistance(),
+                moonriseAdapter == null
+                        ? DistanceBackend.PRIVATE_LOADING_SOURCES
+                        : DistanceBackend.NATIVE_PLAYER_LOADER,
+                distances.limitGeneration(),
+                governorState));
+    }
+
+    private static void republishDistanceSnapshot(PlayerKey key, CapturedPlayer captured) {
+        if (server == null || distanceService == null) {
+            return;
+        }
+        ServerPlayer player = server.getPlayerList().getPlayer(key.toUuid());
+        if (player != null) {
+            publishDistanceSnapshot(player, captured, resolvePlayerDistances(player));
+        }
     }
 
     private static void setConnectionCeiling(ServerPlayer player, int distance) {
@@ -780,6 +1014,13 @@ public final class PerPlayerChunkLoader {
     }
 
     private static void refreshChunkTracking(ServerPlayer player) {
+        if (!isRegistered(player)) {
+            return;
+        }
+        if (moonriseAdapter != null) {
+            moonriseAdapter.refresh(player);
+            return;
+        }
         ServerChunkCache cache = player.level().getChunkSource();
         try {
             ChunkMap chunkMap = ((ServerChunkCacheAccessor) cache).playerviewdistance$getChunkMap();
@@ -793,6 +1034,13 @@ public final class PerPlayerChunkLoader {
                     "PlayerViewDistance's required ChunkMap tracking hook is missing. "
                             + "Update PVD or remove the mod that replaced ChunkMap/ServerChunkCache.", missingMixin);
         }
+    }
+
+    private static int getComposedPlatformDistance(ServerPlayer player) {
+        ChunkMap chunkMap = ((ServerChunkCacheAccessor) player.level().getChunkSource())
+                .playerviewdistance$getChunkMap();
+        return clampVanillaDistance(
+                ((ChunkMapInvoker) chunkMap).playerviewdistance$getPlayerViewDistance(player));
     }
 
     private static void initializeVmpAdapter(MinecraftServer minecraftServer) {
@@ -826,7 +1074,10 @@ public final class PerPlayerChunkLoader {
         try {
             int chunkX = Math.floorDiv(player.getBlockX(), 16);
             int chunkZ = Math.floorDiv(player.getBlockZ(), 16);
-            int trackingRadius = getEffectiveViewDistance(player) + 1;
+            CapturedPlayer captured = players.get(PlayerKey.of(player.getUUID()));
+            int trackingRadius = (captured == null
+                    ? getEffectiveViewDistance(player)
+                    : captured.effectiveSendingDistance()) + 1;
             player.setChunkTrackingView(ChunkTrackingView.of(
                     new ChunkPos(chunkX, chunkZ), trackingRadius));
             Object watcher = vmpGetWatcherMethod.invoke(chunkMap);
@@ -884,7 +1135,7 @@ public final class PerPlayerChunkLoader {
                     throw new NoSuchMethodException("unexpected c2me$getPendingLoadsCount signature");
                 }
                 c2mePendingLoadsMethod = method;
-                PlayerViewDistanceMod.LOGGER.info(
+                PlatformEnvironment.logger().debug(
                         "C2ME no-tick adapter active: its pending-load backlog is included in PVD governance");
                 return;
             } catch (NoSuchMethodException missingHook) {
@@ -1024,6 +1275,7 @@ public final class PerPlayerChunkLoader {
                 if (planner != null) {
                     planner.upsertPlayer(reset.toSnapshot());
                 }
+                republishDistanceSnapshot(entry.getKey(), reset);
             }
         }
     }
@@ -1045,6 +1297,10 @@ public final class PerPlayerChunkLoader {
     }
 
     private static int currentLevelViewDistance(ServerLevel level) {
+        Integer pending = pendingLevelViewDistances.get(dimensionId(level));
+        if (pending != null) {
+            return pending;
+        }
         ChunkMap chunkMap = ((ServerChunkCacheAccessor) level.getChunkSource())
                 .playerviewdistance$getChunkMap();
         return clampVanillaDistance(
@@ -1052,6 +1308,13 @@ public final class PerPlayerChunkLoader {
     }
 
     private static int currentLevelSimulationDistance(ServerLevel level) {
+        Integer pending = pendingLevelSimulationDistances.get(dimensionId(level));
+        if (pending != null) {
+            return pending;
+        }
+        if (moonriseAdapter != null) {
+            return clampVanillaDistance(moonriseAdapter.simulationDistance(level));
+        }
         ChunkMap chunkMap = ((ServerChunkCacheAccessor) level.getChunkSource())
                 .playerviewdistance$getChunkMap();
         Object distanceManager = chunkMap.getDistanceManager();
@@ -1066,6 +1329,7 @@ public final class PerPlayerChunkLoader {
             int achieved = Math.min(player.effectiveViewDistance(),
                     Math.max(player.achievedViewDistance(), ticketRadius - LoadSource.LOADING_MARGIN));
             players.put(owner, player.withAchieved(achieved));
+            republishDistanceSnapshot(owner, players.get(owner));
         }
     }
 
@@ -1100,7 +1364,7 @@ public final class PerPlayerChunkLoader {
             try {
                 overrideRepository.save(snapshot);
             } catch (IOException | IllegalArgumentException failure) {
-                PlayerViewDistanceMod.LOGGER.error("Could not atomically persist PVD overrides", failure);
+                PlatformEnvironment.logger().error("Could not atomically persist PVD overrides", failure);
             }
         });
     }
@@ -1112,7 +1376,7 @@ public final class PerPlayerChunkLoader {
         try {
             overrideRepository.save(Map.copyOf(operatorOverrides));
         } catch (IOException | IllegalArgumentException failure) {
-            PlayerViewDistanceMod.LOGGER.error("Could not persist PVD overrides during shutdown", failure);
+            PlatformEnvironment.logger().error("Could not persist PVD overrides during shutdown", failure);
         }
     }
 
@@ -1124,7 +1388,7 @@ public final class PerPlayerChunkLoader {
         }
         lastTelemetryNanos = now;
         StatusSnapshot status = status();
-        PlayerViewDistanceMod.LOGGER.info(
+        PlatformEnvironment.logger().debug(
                 "PVD status: governor={}, sources={}/{}, union={}/{}, avgMSPT={}, p95MSPT={}, "
                         + "backlog={}, loaded={}, entities={} (mobs={}, items={}), mutations={}, planner={}us, main={}us",
                 status.governorState(), status.appliedSourceCount(), status.desiredSourceCount(),
@@ -1152,6 +1416,16 @@ public final class PerPlayerChunkLoader {
         return Math.max(2, Math.min(32, distance));
     }
 
+    private static Integer minimumLimit(Integer first, Integer second) {
+        if (first == null) {
+            return second;
+        }
+        if (second == null) {
+            return first;
+        }
+        return Math.min(first, second);
+    }
+
     private static int saturatingIntAdd(int first, int second) {
         return first > Integer.MAX_VALUE - second ? Integer.MAX_VALUE : first + second;
     }
@@ -1172,6 +1446,7 @@ public final class PerPlayerChunkLoader {
             int chunkZ,
             int requestedViewDistance,
             int effectiveViewDistance,
+            int effectiveSendingDistance,
             int achievedViewDistance,
             int simulationDistance
     ) {
@@ -1183,7 +1458,50 @@ public final class PerPlayerChunkLoader {
 
         private CapturedPlayer withAchieved(int achieved) {
             return new CapturedPlayer(key, name, dimension, chunkX, chunkZ,
-                    requestedViewDistance, effectiveViewDistance, achieved, simulationDistance);
+                    requestedViewDistance, effectiveViewDistance, effectiveSendingDistance,
+                    achieved, simulationDistance);
+        }
+    }
+
+    private record ResolvedPlayerDistances(
+            int ceiling,
+            Integer externalLoadingLimit,
+            Integer externalSendingLimit,
+            int loadingDistance,
+            int sendingDistance,
+            long limitGeneration
+    ) {
+        private int pvdSendingCeiling() {
+            return DistanceComposer.compose(
+                    ceiling, externalLoadingLimit, externalSendingLimit).sendingDistance();
+        }
+
+        private ResolvedPlayerDistances withAdditionalLimit(int limit) {
+            int clamped = clampVanillaDistance(limit);
+            return new ResolvedPlayerDistances(
+                    ceiling,
+                    externalLoadingLimit,
+                    externalSendingLimit,
+                    Math.min(loadingDistance, clamped),
+                    Math.min(sendingDistance, clamped),
+                    limitGeneration);
+        }
+
+        private ResolvedPlayerDistances withAdditionalLimits(
+                Integer loadingLimit,
+                Integer sendingLimit
+        ) {
+            Integer combinedLoading = minimumLimit(externalLoadingLimit, loadingLimit);
+            Integer combinedSending = minimumLimit(externalSendingLimit, sendingLimit);
+            ComposedDistance composed = DistanceComposer.compose(
+                    ceiling, combinedLoading, combinedSending);
+            return new ResolvedPlayerDistances(
+                    ceiling,
+                    combinedLoading,
+                    combinedSending,
+                    composed.loadingDistance(),
+                    composed.sendingDistance(),
+                    limitGeneration);
         }
     }
 
@@ -1246,6 +1564,7 @@ public final class PerPlayerChunkLoader {
             long plannerNanos,
             long pvdServerThreadNanos,
             int serverViewDistance,
+            int platformViewDistance,
             int simulationDistance
     ) {
     }

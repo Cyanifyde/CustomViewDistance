@@ -1,46 +1,70 @@
 # PlayerViewDistance
 
-PlayerViewDistance is a dedicated-server-only Fabric mod that honors each player's requested render distance while keeping `server.properties` `view-distance` as the hard cap. Version 2 replaces per-chunk ticket spam with exact, shared Chebyshev loading sources and a single coalescing planner thread.
+PlayerViewDistance is a dedicated-server extension for Fabric, Forge, NeoForge,
+Paper, and Folia. It treats each player's requested distance as a ceiling while
+allowing the platform and other governors to lower the final distance further:
+
+```text
+actual distance = min(PVD ceiling, every lower platform or provider limit)
+```
+
+PVD never changes simulation distance, entity ticking, or tickets owned by
+Minecraft or another mod.
 
 ## Supported releases
 
-| Artifact | Minecraft | Java | Mappings |
+| Platform | Artifact | Minecraft | Java |
 | --- | --- | --- | --- |
-| `playerviewdistance-2.0.1+mc1.21.11.jar` | 1.21.11 | 21 | Mojang mappings, remapped for Fabric |
-| `playerviewdistance-2.0.1+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 | Loom unobfuscated |
-| `playerviewdistance-2.0.1+mc26.2.jar` | 26.2 | 25 | Loom unobfuscated |
+| Fabric | `playerviewdistance-2.1.0+mc1.21.11.jar` | 1.21.11 | 21 |
+| Fabric | `playerviewdistance-2.1.0+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 |
+| Fabric | `playerviewdistance-2.1.0+mc26.2.jar` | 26.2 | 25 |
+| Forge | `playerviewdistance-forge-2.1.0+mc1.21.11.jar` | 1.21.11 | 21 |
+| Forge | `playerviewdistance-forge-2.1.0+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 |
+| Forge | `playerviewdistance-forge-2.1.0+mc26.2.jar` | 26.2 | 25 |
+| NeoForge | `playerviewdistance-neoforge-2.1.0+mc1.21.11.jar` | 1.21.11 | 21 |
+| NeoForge | `playerviewdistance-neoforge-2.1.0+mc26.1.jar` | 26.1, 26.1.1, 26.1.2 | 25 |
+| NeoForge | `playerviewdistance-neoforge-2.1.0+mc26.2.jar` | 26.2 | 25 |
+| Paper/Folia | `playerviewdistance-paper-2.1.0+mc1.21.11.jar` | 1.21.11 | 21 |
+| Paper/Folia | `playerviewdistance-paper-2.1.0+mc26.x.jar` | available 26.1.x and 26.2 builds | 25 |
 
-Fabric Loader 0.19.3 and the matching Fabric API are required. Do not install PVD on clients.
+Fabric requires Loader 0.19.3 and the matching Fabric API. Install mod-loader
+artifacts only on dedicated servers. Install the Paper/Folia artifact as a
+plugin, not as a mod.
 
 ## Behavior
 
-For each player, the effective distance is:
+PVD calculates its own ceiling as:
 
 ```text
-clamp(persistent override ?? client request,
-      config min,
-      config max,
-      server view-distance)
+min(platform or world hard cap,
+    config maximum,
+    max(config minimum, persistent override ?? client request))
 ```
 
-That value is a ceiling, not a forced distance. A dimension-specific setting
-or compatible load governor may lower the active distance further. PVD clamps
-both chunk tracking and outgoing client-cache-radius packets, so another mod
-cannot raise either path past the ceiling.
+External limits compose by taking the minimum and may go below PVD's configured
+minimum. PVD clamps both loading and sending, so another component cannot raise
+either path past the PVD ceiling.
 
-Client chunk sending and server loading are intentionally separate:
+On Fabric, Forge, and NeoForge, vanilla player-loading coverage follows the
+configured simulation distance. PVD adds only private loading-only coverage
+beyond that floor. Nearby players share an exact, irredundant union of square
+sources, including Minecraft's loading margin. Movement and disconnects retire
+stale sources immediately. Forced, spawn, portal, simulation, and mod-owned
+tickets remain independent.
 
-- The client receives chunks only to that player's effective distance.
-- Vanilla player-loading coverage is based on `simulation-distance`, preserving the expected mob, item, redstone, block-entity, and random-tick behavior.
-- PVD adds only its own loading-only ticket type beyond that simulation floor. It never creates simulation tickets or removes another mod's tickets.
-- Nearby players share an exact irredundant union of square loading sources. PVD does not replace clusters with oversized bounding boxes.
-- Movement and disconnects synchronously retire stale PVD sources. Under pressure, distant coverage may temporarily be incomplete; stale coverage is never deliberately retained behind a player.
+Moonrise uses its native per-player loader through PVD's dedicated adapter, so
+PVD creates no private ticket sources in that mode. Paper and Folia use native
+per-player loading and sending APIs and never create plugin chunk tickets.
 
-Geometry, overlap indexing, exact refcounts, source matching, diffing, percentile work, prioritization, and governor calculations run on one off-thread planner. Minecraft's thread-affine ticket changes remain on the server thread and are budgeted by predicted graph-cell cost and measured nanoseconds.
+Geometry, overlap accounting, source matching, diffing, prioritization, and the
+adaptive governor run on one coalescing planner thread. Only thread-affine
+Minecraft mutations run on the owning server or entity scheduler. Routine
+startup output is a single line: `PVD is running.`
 
 ## Configuration
 
-The schema 2 file is `config/playerviewdistance.json`:
+Mod-loader configuration is stored under `config/`. Paper and Folia use
+`plugins/PlayerViewDistance/`. Schema 2 defaults to:
 
 ```json
 {
@@ -52,59 +76,55 @@ The schema 2 file is `config/playerviewdistance.json`:
 }
 ```
 
-Valid reloads are applied transactionally with `/pvd reload`. An invalid file is left untouched and the last-known-good configuration remains active. A valid legacy `customviewdistance.json` is migrated once and archived as `customviewdistance.json.migrated`.
-
-Persistent UUID overrides are stored atomically in `config/playerviewdistance-overrides.json`.
+Reloads are transactional. Invalid files remain untouched and the last-known-good
+configuration stays active. Persistent UUID overrides are written atomically to
+`playerviewdistance-overrides.json`. A valid legacy `customviewdistance.json`
+is migrated once.
 
 ## Commands
 
-All commands require game-master permission:
+Administration requires game-master permission on mod loaders or
+`playerviewdistance.admin` on Paper/Folia.
 
-- `/pvd set <player> <2..32>` — persist an override; normal config/server caps still apply.
-- `/pvd reset <player>` — remove the persistent override.
-- `/pvd list` — show requested, desired, and applied player distances.
-- `/pvd reload` — validate and transactionally reload schema 2.
-- `/pvd status` — show source/union convergence, planner generation, MSPT, chunk backlog, loaded chunks, entity counters, ticket mutations, and governor state.
+- `/pvd set <player> <2..32>` replies `Set to X.`
+- `/pvd reset <player>` replies `Reset.`
+- `/pvd reload` replies `Reloaded.` after a valid reload.
+- `/pvd status` replies `Currently at X.` for a player; console uses the list view.
+- `/pvd list` reports the average and up to the ten players with the highest applied distances as `Player Y has X.`
 
 ## Compatibility
 
-PVD 2 has explicit integration for C2ME's no-tick view distance and VMP's per-player area watcher. Missing required hooks fail at startup with an actionable error instead of silently changing semantics. Runtime changes to a world's view or simulation distance trigger an immediate, dimension-local re-plan without touching tickets owned by other mods.
+PVD exposes the thread-safe `PlayerViewDistanceService` for cooperative loading
+and sending limits. Multiple providers compose by minimum; the service cannot
+change simulation distance. Bukkit exposes it through `ServicesManager`, while
+mod loaders expose the same API through `PlayerViewDistanceApi`.
 
-Current compatibility targets include:
-
-- Lithium `0.25.3+mc26.2`
-- FerriteCore `9.0.0`
-- C2ME `0.4.2-alpha.0.43+26.2`
-- VMP `0.2.0+beta.7.236+26.2`
-- ServerCore `1.5.19+26.2`
-- Adaptive View `2.4.4+26.2`
-- Dynamic Performance `0.2.0+26.1`
-- View Distance Fix `1.0.2+26.2`
-- Entity View Distance `1.9.0+26.2`
-- World Specific View Distance `0.2.1+1.21.11`
-- Chunk Loaders `1.2.9` with its pinned library dependencies
-- Custom Dimensions `1.2.1` and Dimension Daddy `2.0.0+26.2`
-
-The dedicated-server stacks from Adrenaline `26.4.2+mc26.2.fabric` and
-Optimize My Server `26.2.0.1` are also exercised as release compatibility
-targets.
+The release has dedicated integration for C2ME, VMP, and Moonrise and composes
+with adaptive-distance providers such as ServerCore. Compatibility coverage also
+includes Lithium, FerriteCore, ModernFix, Alternate Current, ScalableLux,
+Krypton, Let Me Despawn, Chunky, common chunk loaders, and representative
+server modpacks on their applicable loaders.
 
 ## Build
 
-The wrapper is Gradle 9.5.1 and Loom is pinned to 1.17.19. Install Java 21 and Java 25, then run:
+The wrapper is Gradle 9.5.1. Fabric Loom is pinned to 1.17.19. Install Java 21
+and Java 25, then run:
 
 ```powershell
 .\gradlew.bat clean build releaseArtifacts
 ```
 
-Linux/macOS:
+Linux and macOS:
 
 ```bash
 ./gradlew clean build releaseArtifacts
 ```
 
-Exactly three release binaries and three source JARs are synchronized into `build/release/`. Test verifier JARs are deliberately excluded.
+Eleven production binaries and eleven source JARs are synchronized into
+`build/release/`. Local verification tools, worlds, probes, reports, downloaded
+mods, and publishing utilities are not part of the repository or release.
 
 ## Migration and license
 
-Read [the 2.0 migration guide](docs/MIGRATION-2.0.0.md) before replacing 1.x. PlayerViewDistance is licensed under [Apache License 2.0](LICENSE).
+Read [the 2.0 migration guide](docs/MIGRATION-2.0.0.md) before replacing 1.x.
+PlayerViewDistance is licensed under [Apache License 2.0](LICENSE).

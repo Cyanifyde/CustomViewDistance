@@ -1,17 +1,22 @@
 {
   "required": true,
+  "minVersion": "0.8.7",
   "package": "com.playerviewdistance.mixin",
-  "compatibilityLevel": "${java_compatibility}",
+  "plugin": "com.playerviewdistance.mixin.PvdMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
   "server": [
     "ConnectionMixin",
     "ChunkMapMixin",
+    "ChunkMapVanillaLoadingMixin",
     "ChunkMapInvoker",
     "DistanceManagerAccessor",
     "DistanceManagerMixin",
+    "NeoForgeConfigurationTaskMixin",
     "PlayerListMixin",
     "ServerChunkCacheMixin",
     "ServerChunkCacheAccessor",
     "ServerCommonPacketListenerAccessor",
+    "ServerConfigurationPacketListenerInvoker",
     "ServerGamePacketListenerImplMixin",
     "ServerPlayerMixin"
   ],

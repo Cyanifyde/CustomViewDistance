@@ -12,8 +12,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
+import java.util.Objects;
 
-/** Computes an exact, deterministic, irredundant union of Chebyshev loading sources. */
 public final class ExactUnionPlanner {
     private static final int INDEX_BUCKET_SIZE = 32;
 
@@ -21,7 +22,7 @@ public final class ExactUnionPlanner {
         long started = System.nanoTime();
         List<LoadSource> grouped = groupIdenticalCenters(players);
         if (grouped.isEmpty()) {
-            return new UnionResult(List.of(), 0, System.nanoTime() - started);
+            return new UnionResult(Collections.<LoadSource>emptyList(), 0, System.nanoTime() - started);
         }
 
         grouped.sort(LoadSource.ORDER);
@@ -59,7 +60,7 @@ public final class ExactUnionPlanner {
             }
         }
         sources.sort(LoadSource.ORDER);
-        return new UnionResult(List.copyOf(sources), exactArea, System.nanoTime() - started);
+        return new UnionResult(sources, exactArea, System.nanoTime() - started);
     }
 
     public long exactUnionArea(Collection<LoadSource> sources) {
@@ -109,12 +110,6 @@ public final class ExactUnionPlanner {
         return changed;
     }
 
-    /**
-     * Computes per-player achieved radii from the complete projected union.
-     * This deliberately runs on the planner thread: merged sources may cover
-     * players other than their synthetic owner, and checking those squares is
-     * geometry work rather than a server-thread ticket mutation.
-     */
     public List<PlayerCoverage> achievedCoverage(
             Collection<PlayerSnapshot> players,
             Collection<AppliedSourceSnapshot> applied
@@ -147,7 +142,7 @@ public final class ExactUnionPlanner {
             coverage.add(new PlayerCoverage(player.player(), low));
         }
         coverage.sort(Comparator.comparing(PlayerCoverage::player));
-        return List.copyOf(coverage);
+        return Collections.unmodifiableList(new ArrayList<PlayerCoverage>(coverage));
     }
 
     private static boolean squareCovered(LongOpenHashSet cells, PlayerSnapshot player, int radius) {
@@ -243,10 +238,46 @@ public final class ExactUnionPlanner {
         return true;
     }
 
-    public record UnionResult(List<LoadSource> sources, long exactUnionArea, long plannerNanos) {
+    public static final class UnionResult {
+        private final List<LoadSource> sources;
+        private final long exactUnionArea;
+        private final long plannerNanos;
+
+        public UnionResult(List<LoadSource> sources, long exactUnionArea, long plannerNanos) {
+            this.sources = Collections.unmodifiableList(new ArrayList<LoadSource>(sources));
+            this.exactUnionArea = exactUnionArea;
+            this.plannerNanos = plannerNanos;
+        }
+
+        public List<LoadSource> sources() { return sources; }
+        public long exactUnionArea() { return exactUnionArea; }
+        public long plannerNanos() { return plannerNanos; }
     }
 
-    private record Center(String dimension, int chunkX, int chunkZ) {
+    private static final class Center {
+        private final String dimension;
+        private final int chunkX;
+        private final int chunkZ;
+
+        private Center(String dimension, int chunkX, int chunkZ) {
+            this.dimension = dimension;
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof Center)) return false;
+            Center that = (Center) other;
+            return chunkX == that.chunkX && chunkZ == that.chunkZ
+                    && dimension.equals(that.dimension);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(dimension, chunkX, chunkZ);
+        }
     }
 
     private static final class UnionFind {

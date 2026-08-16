@@ -1,6 +1,8 @@
 package com.playerviewdistance.core;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -10,7 +12,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** One coalescing planner worker with replaceable input and output slots. */
 public final class PlannerService implements AutoCloseable {
     private final LatestStateMailbox mailbox = new LatestStateMailbox();
     private final ExactUnionPlanner unionPlanner = new ExactUnionPlanner();
@@ -24,10 +25,12 @@ public final class PlannerService implements AutoCloseable {
     private final AtomicReference<Runnable> pendingPersistence = new AtomicReference<>();
     private final AtomicReference<Throwable> lastFailure = new AtomicReference<>();
     private final AtomicBoolean scheduled = new AtomicBoolean();
+    private final Object executorLifecycle = new Object();
     private volatile boolean closed;
 
     private long cachedPlayerGeneration = -1;
-    private ExactUnionPlanner.UnionResult cachedUnion = new ExactUnionPlanner.UnionResult(List.of(), 0, 0);
+    private ExactUnionPlanner.UnionResult cachedUnion = new ExactUnionPlanner.UnionResult(
+            Collections.<LoadSource>emptyList(), 0, 0);
 
     public PlannerService() {
         executor = Executors.newSingleThreadExecutor(runnable -> {
@@ -67,7 +70,7 @@ public final class PlannerService implements AutoCloseable {
                 generation,
                 mailbox.generation(),
                 appliedRevision,
-                List.copyOf(appliedSources),
+                Collections.unmodifiableList(new ArrayList<AppliedSourceSnapshot>(appliedSources)),
                 Objects.requireNonNull(metrics, "metrics")
         ));
         schedule();
@@ -98,8 +101,10 @@ public final class PlannerService implements AutoCloseable {
     }
 
     private void schedule() {
-        if (scheduled.compareAndSet(false, true)) {
-            executor.execute(this::drain);
+        synchronized (executorLifecycle) {
+            if (!closed && scheduled.compareAndSet(false, true)) {
+                executor.execute(this::drain);
+            }
         }
     }
 
@@ -137,8 +142,7 @@ public final class PlannerService implements AutoCloseable {
             lastFailure.set(failure);
             Request failed = latestRequest.get();
             if (failed != null) {
-                // Do not hot-loop the same deterministic failure. A subsequent
-                // request still schedules a fresh attempt and can recover.
+
                 processedGeneration = failed.generation();
             }
         } finally {
@@ -190,8 +194,10 @@ public final class PlannerService implements AutoCloseable {
     }
 
     public void close(Duration timeout) {
-        closed = true;
-        executor.shutdown();
+        synchronized (executorLifecycle) {
+            closed = true;
+            executor.shutdown();
+        }
         try {
             if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 executor.shutdownNow();
@@ -203,12 +209,26 @@ public final class PlannerService implements AutoCloseable {
         }
     }
 
-    private record Request(
-            long generation,
-            long playerGeneration,
-            long appliedRevision,
-            List<AppliedSourceSnapshot> appliedSources,
-            PlannerMetrics metrics
-    ) {
+    private static final class Request {
+        private final long generation;
+        private final long playerGeneration;
+        private final long appliedRevision;
+        private final List<AppliedSourceSnapshot> appliedSources;
+        private final PlannerMetrics metrics;
+
+        private Request(long generation, long playerGeneration, long appliedRevision,
+                        List<AppliedSourceSnapshot> appliedSources, PlannerMetrics metrics) {
+            this.generation = generation;
+            this.playerGeneration = playerGeneration;
+            this.appliedRevision = appliedRevision;
+            this.appliedSources = appliedSources;
+            this.metrics = metrics;
+        }
+
+        private long generation() { return generation; }
+        private long playerGeneration() { return playerGeneration; }
+        private long appliedRevision() { return appliedRevision; }
+        private List<AppliedSourceSnapshot> appliedSources() { return appliedSources; }
+        private PlannerMetrics metrics() { return metrics; }
     }
 }

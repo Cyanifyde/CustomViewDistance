@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.Collections;
 
 public final class OverrideRepository {
     public static final String FILE_NAME = "playerviewdistance-overrides.json";
@@ -32,10 +33,12 @@ public final class OverrideRepository {
     public LoadOutcome load() {
         if (!Files.exists(file)) {
             try {
-                save(Map.of());
-                return new LoadOutcome(true, Map.of(), "Created persistent override store");
+                save(Collections.<PlayerKey, Integer>emptyMap());
+                return new LoadOutcome(true, Collections.<PlayerKey, Integer>emptyMap(),
+                        "Created persistent override store");
             } catch (IOException failure) {
-                return new LoadOutcome(false, Map.of(), "Could not create override store: " + failure.getMessage());
+                return new LoadOutcome(false, Collections.<PlayerKey, Integer>emptyMap(),
+                        "Could not create override store: " + failure.getMessage());
             }
         }
         try (Reader reader = Files.newBufferedReader(file)) {
@@ -60,9 +63,9 @@ public final class OverrideRepository {
                 }
                 result.put(PlayerKey.of(uuid), distance);
             }
-            return new LoadOutcome(true, Map.copyOf(result), "Loaded persistent overrides");
+            return new LoadOutcome(true, result, "Loaded persistent overrides");
         } catch (IOException | JsonParseException | IllegalArgumentException | ArithmeticException failure) {
-            return new LoadOutcome(false, Map.of(),
+            return new LoadOutcome(false, Collections.<PlayerKey, Integer>emptyMap(),
                     "Invalid override store; file left untouched: " + failure.getMessage());
         }
     }
@@ -94,6 +97,19 @@ public final class OverrideRepository {
         AtomicFiles.writeUtf8(file, GSON.toJson(document) + System.lineSeparator());
     }
 
-    public record LoadOutcome(boolean success, Map<PlayerKey, Integer> overrides, String message) {
+    public static final class LoadOutcome {
+        private final boolean success;
+        private final Map<PlayerKey, Integer> overrides;
+        private final String message;
+
+        public LoadOutcome(boolean success, Map<PlayerKey, Integer> overrides, String message) {
+            this.success = success;
+            this.overrides = Collections.unmodifiableMap(new HashMap<PlayerKey, Integer>(overrides));
+            this.message = message;
+        }
+
+        public boolean success() { return success; }
+        public Map<PlayerKey, Integer> overrides() { return overrides; }
+        public String message() { return message; }
     }
 }

@@ -167,9 +167,35 @@ public final class ConfigRepository {
         return element;
     }
 
-    public record LoadOutcome(boolean success, boolean migrated, ConfigData config, String message) {
+    public static final class LoadOutcome {
+        private final boolean success;
+        private final boolean migrated;
+        private final ConfigData config;
+        private final String message;
+
+        public LoadOutcome(boolean success, boolean migrated, ConfigData config, String message) {
+            this.success = success;
+            this.migrated = migrated;
+            this.config = config;
+            this.message = message;
+        }
+
+        public boolean success() { return success; }
+        public boolean migrated() { return migrated; }
+        public ConfigData config() { return config; }
+        public String message() { return message; }
     }
 
-    private record Parsed(ConfigData config, boolean upgraded) {
+    private static final class Parsed {
+        private final ConfigData config;
+        private final boolean upgraded;
+
+        private Parsed(ConfigData config, boolean upgraded) {
+            this.config = config;
+            this.upgraded = upgraded;
+        }
+
+        private ConfigData config() { return config; }
+        private boolean upgraded() { return upgraded; }
     }
 }
